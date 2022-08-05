@@ -47,14 +47,22 @@ public:
 }
 
 char BoundsCheckPass::ID = 0;
-INITIALIZE_PASS_BEGIN(BoundsCheckPass, "loop-deletion",
+INITIALIZE_PASS_BEGIN(BoundsCheckPass, "bounds-check",
                       "Delete dead loops", false, false)
 INITIALIZE_PASS_DEPENDENCY(LoopPass)
-INITIALIZE_PASS_END(BoundsCheckPass, "loop-deletion",
+INITIALIZE_PASS_END(BoundsCheckPass, "bounds-check",
                     "Delete dead loops", false, false)
 
 Pass *llvm::createBoundsCheck() { return new BoundsCheckPass(); }
 
 bool BoundsCheckPass::runOnFunction(Function &F) {
-  return false;
+  for(auto& bb : F){
+    for(auto& dd: bb){
+      if(dd.getMetadata(10) != nullptr){
+        Constant *NewC = ConstantInt::get(Type::getInt1Ty(dd.getContext()),1, false);
+        dd.setOperand(0, NewC);
+      }
+    }
+  }
+  return true;
 }
