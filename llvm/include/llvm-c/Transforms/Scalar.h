@@ -82,6 +82,9 @@ void LLVMAddLoopDeletionPass(LLVMPassManagerRef PM);
 /** See llvm::createLoopDeletionPass function. */
 void LLVMAddBoundsCheckPass(LLVMPassManagerRef PM);
 
+/** See llvm::createLoopDeletionPass function. */
+void LLVMAddBoundsCheckLoopPass(LLVMPassManagerRef PM);
+
 /** See llvm::createLoopIdiomPass function */
 void LLVMAddLoopIdiomPass(LLVMPassManagerRef PM);
 

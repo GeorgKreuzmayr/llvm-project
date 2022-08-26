@@ -26,6 +26,16 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/LoopPassManager.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
+#include "llvm/Pass.h"
+#include "llvm/IR/Function.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/Analysis/AssumptionCache.h"
 
 using namespace llvm;
 
@@ -37,11 +47,62 @@ public:
      initializeBoundsCheckPassPass(*PassRegistry::getPassRegistry());
   }
 
-  // Possibly eliminate loop L if it is dead.
-  bool runOnFunction(Function &F) override;
+  bool runOnFunction(Function &F) override {
+    if(!F.getName().equals("wasmer_function__5")){
+      return false;
+    }
 
+    for(auto&BasicBlock : F){
+      for(auto&Instruction : BasicBlock){
+        // Instruction.dump();
+        if(Instruction.getMetadata(10) != nullptr){
+          if(auto*StringMetaData = dyn_cast<MDString>(
+                  Instruction.getMetadata(10)->getOperand(0).get())) {
+            if (StringMetaData->getString().equals("wasmer_bounds_check")) {
+              // Found memory access with bounds check
+
+              // assume vec + i less than 2000
+              if(Instruction.getOperand(0)->hasName()){
+                if(Instruction.getOperand(0)->getName().equals("ptr_in_bounds_expect")){
+                  auto* CmpInstruction = dyn_cast<ICmpInst>(Instruction.getPrevNode()->getPrevNode());
+                  auto* VecAndI = dyn_cast<AddOperator>(CmpInstruction->getOperand(0));
+                  ICmpInst *VecAndICmp = new ICmpInst(ICmpInst::ICMP_ULT, VecAndI, ConstantInt::get(VecAndI->getType(), 2000, false));
+                  VecAndICmp->insertBefore(CmpInstruction);
+                  assumeCMPIsTrue(VecAndICmp);
+                }
+              }
+
+              // assume ptr_in_bounds_expect == true
+
+              auto *Prev = Instruction.getPrevNode();
+              while (!dyn_cast<ICmpInst>(Prev)) {
+                Prev = Prev->getPrevNode();
+              }
+              // Cmp Instruction for bounds check
+              auto *ICMPInst = dyn_cast<ICmpInst>(Prev);
+              assumeCMPIsTrue(ICMPInst);
+
+            }
+          }
+        }
+      }
+    }
+    return true;
+  }
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addPreserved<MemorySSAWrapperPass>();
+    AU.addRequired<AssumptionCacheTracker>();
+    AU.addPreserved<AssumptionCacheTracker>();
+    // AU.addRequired<LoopInfo>();
+  }
+
+private:
+  void assumeCMPIsTrue(ICmpInst* ICMPInst){
+    Function *AssumeIntrinsic = Intrinsic::getDeclaration(
+        ICMPInst->getModule(), Intrinsic::assume);
+    CallInst *CI = CallInst::Create(AssumeIntrinsic, {ICMPInst});
+    CI->insertAfter(ICMPInst);
+    AssumptionCache AC = getAnalysis<AssumptionCacheTracker>().getAssumptionCache(*ICMPInst->getFunction());
+    AC.registerAssumption(CI);
   }
 };
 }
@@ -50,19 +111,8 @@ char BoundsCheckPass::ID = 0;
 INITIALIZE_PASS_BEGIN(BoundsCheckPass, "bounds-check",
                       "Delete dead loops", false, false)
 INITIALIZE_PASS_DEPENDENCY(LoopPass)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
 INITIALIZE_PASS_END(BoundsCheckPass, "bounds-check",
                     "Delete dead loops", false, false)
 
 Pass *llvm::createBoundsCheck() { return new BoundsCheckPass(); }
-
-bool BoundsCheckPass::runOnFunction(Function &F) {
-  for(auto& bb : F){
-    for(auto& dd: bb){
-      if(dd.getMetadata(10) != nullptr){
-        Constant *NewC = ConstantInt::get(Type::getInt1Ty(dd.getContext()),1, false);
-        dd.setOperand(0, NewC);
-      }
-    }
-  }
-  return true;
-}

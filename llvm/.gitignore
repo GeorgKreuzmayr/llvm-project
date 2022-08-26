@@ -34,6 +34,7 @@ autoconf/autom4te.cache
 /.idea
 # Qt Creator project configuration
 /CMakeLists.txt.user
+cmake-build-debug
 
 #==============================================================================#
 # Directories to ignore (do not add trailing '/'s, they skip symlinks).

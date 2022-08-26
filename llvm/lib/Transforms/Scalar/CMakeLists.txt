@@ -3,6 +3,8 @@ add_llvm_component_library(LLVMScalarOpts
   AlignmentFromAssumptions.cpp
   AnnotationRemarks.cpp
   BDCE.cpp
+  BoundsCheckPass.cpp
+  BoundsCheckLoopPass.cpp
   CallSiteSplitting.cpp
   ConstantHoisting.cpp
   ConstraintElimination.cpp
@@ -27,7 +29,6 @@ add_llvm_component_library(LLVMScalarOpts
   LoopAccessAnalysisPrinter.cpp
   LoopSink.cpp
   LoopDeletion.cpp
-  BoundsCheckPass.cpp
   LoopDataPrefetch.cpp
   LoopDistribute.cpp
   LoopFuse.cpp

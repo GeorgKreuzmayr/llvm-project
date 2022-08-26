@@ -349,6 +349,13 @@ Pass *createBoundsCheck();
 
 //===----------------------------------------------------------------------===//
 //
+// LoopDeletion - This pass performs DCE of non-infinite loops that it
+// can prove are dead.
+//
+Pass *createBoundsCheckLoop();
+
+//===----------------------------------------------------------------------===//
+//
 // ConstantHoisting - This pass prepares a function for expensive constants.
 //
 FunctionPass *createConstantHoistingPass();
