@@ -45,8 +45,10 @@ struct WasmerFunctionPass : public FunctionPass {
               /* assume ptr_in_bounds_expect == true */
               auto *Prev = Instruction.getPrevNode();
               while (!dyn_cast<ICmpInst>(Prev)) {
+                Prev->dump();
                 Prev = Prev->getPrevNode();
               }
+              // Test
               // Cmp Instruction for bounds check
               auto *ICMPInst = dyn_cast<ICmpInst>(Prev);
               assumeCMPIsTrue(ICMPInst);
@@ -76,7 +78,7 @@ private:
 }  // end of anonymous namespace
 
 char WasmerFunctionPass::ID = 0;
-static RegisterPass<WasmerFunctionPass> X("hello", "Hello World Pass",
+static RegisterPass<WasmerFunctionPass> X("wasmer-function", "Hello World Pass",
                              false /* Only looks at CFG */,
                              false /* Analysis Pass */);
 
