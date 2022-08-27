@@ -48,6 +48,7 @@ public:
   }
 
   bool runOnFunction(Function &F) override {
+    /*
     if(!F.getName().equals("wasmer_function__5")){
       return false;
     }
@@ -88,6 +89,8 @@ public:
       }
     }
     return true;
+     */
+    return false;
   }
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<AssumptionCacheTracker>();

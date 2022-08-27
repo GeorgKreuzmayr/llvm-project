@@ -21,7 +21,7 @@ struct WasmerFunctionPass : public FunctionPass {
     if(!F.getName().equals("wasmer_function__5")){
       return false;
     }
-
+/*
     for(auto&BasicBlock : F){
       for(auto&Instruction : BasicBlock){
         if(Instruction.getMetadata(10) != nullptr){
@@ -30,7 +30,7 @@ struct WasmerFunctionPass : public FunctionPass {
             if (StringMetaData->getString().equals("wasmer_bounds_check")) {
               // Found memory access with bounds check
 
-              /* assume vec + i less than 2000
+              // assume vec + i less than 2000
               if(Instruction.getOperand(0)->hasName()){
                 if(Instruction.getOperand(0)->getName().equals("ptr_in_bounds_expect")){
                   auto* CmpInstruction = dyn_cast<ICmpInst>(Instruction.getPrevNode()->getPrevNode());
@@ -40,25 +40,23 @@ struct WasmerFunctionPass : public FunctionPass {
                   assumeCMPIsTrue(VecAndICmp);
                 }
               }
-              */
 
-              /* assume ptr_in_bounds_expect == true */
+              // assume ptr_in_bounds_expect == true
               auto *Prev = Instruction.getPrevNode();
               while (!dyn_cast<ICmpInst>(Prev)) {
-                Prev->dump();
                 Prev = Prev->getPrevNode();
               }
               // Test
               // Cmp Instruction for bounds check
               auto *ICMPInst = dyn_cast<ICmpInst>(Prev);
               assumeCMPIsTrue(ICMPInst);
-              /* */
             }
           }
         }
       }
     }
-    return true;
+    */
+    return false;
   }
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<AssumptionCacheTracker>();
