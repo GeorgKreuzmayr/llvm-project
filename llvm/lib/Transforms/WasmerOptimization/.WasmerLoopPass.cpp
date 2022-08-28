@@ -43,95 +43,32 @@ public:
   WasmerLoopPass() : LoopPass(ID) {
   }
 
-  Value* getLoopVariable(Loop * L){
-    auto* BB = L->getHeader();
-    auto it = BB->begin();
-    ++it;
-    ++it;
-    auto& inst = *it;
-    auto* load = dyn_cast<LoadInst>(&inst);
-    auto* local1 = load->getOperand(0);
-    return local1;
-  }
-
-  BranchInst *getPHBranch(BasicBlock *pBlock){
-    Instruction* last_inst = nullptr;
-    for(auto& inst : *pBlock){
-      last_inst = &inst;
-    }
-    return dyn_cast<BranchInst>(last_inst);
-  }
   bool runOnLoop(Loop *L, LPPassManager &LPM) override {
-    auto* PH = L->getLoopPreheader();
-    if(!PH->getParent()->getName().equals("wasmer_function__5")){
+    if(!L->getLoopPreheader()->getParent()->getName().equals("wasmer_function__5")){
       return false;
     }
-    auto* B = L->getHeader(); // TODO: get BB with Bounds Check
-    auto& vst = B->getModule()->getValueSymbolTable();
-    ValueToValueMapTy VMap;
-    auto* BBDash = CloneBasicBlock(B, VMap, "_bounds_check", B->getParent());
-    VMap[B] = BBDash;
-    for(auto& Inst : *BBDash){
-      RemapInstruction(&Inst, VMap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
-    }
 
-    auto* indexVar = getLoopVariable(L);
-    int maxValue = 200000000; // TODO: get Loop Max value
-    bool found = false;
-    for(auto& inst : *BBDash){
-      if(found){
-        // inst.dump();
-      }
-      for(int i = 0; i < inst.getNumOperands(); ++i){
-        auto* operand = inst.getOperand(i);
-        if(operand == indexVar){
-          auto maxV = ConstantInt::get(inst.getType(), maxValue, false);
-          inst.replaceAllUsesWith(maxV);
-          found = true;
-          inst.dump();
+    ValueToValueMapTy  VMap;
+    auto* LastPreLoopBlock = L->getLoopPreheader();
+    for(auto* BB : L->getBlocks()){
+      auto* LastInstruction = &BB->getInstList().back();
+      if(isAnnotated(LastInstruction)){
+        // Last instruction is annotated branch after bounds check
+        auto* Branch = dyn_cast<BranchInst>(LastInstruction);
+        assert(Branch);
+        // TODO: Update PHI Nodes?
+        auto* BBDash = CloneBasicBlock(BB, VMap, "_bounds_check", BB->getParent());
+        VMap[BB] = BBDash;
+        for(auto& Inst : *BBDash){
+          RemapInstruction(&Inst, VMap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
         }
+        assumeIndexIsInBounds(BB);
+        auto LB = getLoopBounds(L);
+        replaceIndexWithMax(BBDash, LB.IndexPointer, LB.MaxValue);
+        addBBDashToPreHeader(LastPreLoopBlock, BBDash, L);
+        LastPreLoopBlock = BBDash;
       }
     }
-    auto* branch = getPHBranch(PH);
-    branch->setSuccessor(0, BBDash);
-    auto* branchBBDash = getPHBranch(BBDash);
-    branchBBDash->setSuccessor(0, B);
-
-    for(auto&Instruction : *B) {
-      if (Instruction.getMetadata(10) != nullptr) {
-        if (auto *StringMetaData = dyn_cast<MDString>(
-                Instruction.getMetadata(10)->getOperand(0).get())) {
-          if (StringMetaData->getString().equals("wasmer_bounds_check")) {
-            // Found memory access with bounds check
-
-            /* assume ptr_in_bounds_expect == true */
-            auto *Prev = Instruction.getPrevNode();
-            while (!dyn_cast<ICmpInst>(Prev)) {
-              Prev = Prev->getPrevNode();
-            }
-            // Cmp Instruction for bounds check
-            auto *ICMPInst = dyn_cast<ICmpInst>(Prev);
-            assumeCMPIsTrue(ICMPInst);
-          }
-        }
-      }
-    }
-    BBDash->moveAfter(PH);
-    BBDash->dump();
-
-  /*
-    auto bounds = L->getBounds(SE);
-    if(L->isCanonical(SE)){
-      L->dump();
-    }
-    if(bounds){
-      auto val = bounds.getValue();
-      auto& initial = val.getInitialIVValue();
-      auto& final = val.getFinalIVValue();
-      initial.dump();
-      final.dump();
-    }
-    */
     return true;
   }
 
@@ -143,7 +80,68 @@ public:
   }
 
 private:
-  void assumeCMPIsTrue(ICmpInst* ICMPInst){
+  struct LoopBounds {
+    Value* IndexPointer;
+    int MaxValue;
+  };
+
+  LoopBounds getLoopBounds(Loop * L){
+    auto* BB = L->getHeader();
+    auto it = BB->begin();
+    ++it;
+    ++it;
+    auto& inst = *it;
+    auto* load = dyn_cast<LoadInst>(&inst);
+    auto* local1 = load->getOperand(0);
+    return {local1, 200000000};
+  }
+
+  bool isAnnotated(Instruction* Inst){
+    if (Inst->getMetadata(10) != nullptr) {
+      if (auto *StringMetaData =
+              dyn_cast<MDString>(Inst->getMetadata(10)->getOperand(0).get())) {
+        if (StringMetaData->getString().equals("wasmer_bounds_check")) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  void addBBDashToPreHeader(BasicBlock *LastPreLoopBlock, BasicBlock *BBDash, Loop* L){
+    auto* PreHeaderBranch = dyn_cast<BranchInst>(&LastPreLoopBlock->getInstList().back());
+    assert(PreHeaderBranch);
+    PreHeaderBranch->setSuccessor(0, BBDash);
+    auto* BBDashBranch = dyn_cast<BranchInst>(&BBDash->getInstList().back());
+    assert(BBDashBranch);
+    BBDashBranch->setSuccessor(0, L->getHeader());
+  }
+
+  void replaceIndexWithMax(BasicBlock *BB, Value*IndexPointer, int MaxValue) {
+    for(auto&Instruction : *BB){
+      for(uint64_t I = 0; I < Instruction.getNumOperands(); ++I){
+        auto*Operand = Instruction.getOperand(I);
+        if(Operand == IndexPointer){
+          // Found Load of Index
+          auto* Load = dyn_cast<LoadInst>(&Instruction);
+          assert(Load);
+          auto* MaxConst = ConstantInt::get(Load->getType(), MaxValue, false);
+          // Replace index with its maximum value
+          Instruction.replaceAllUsesWith(MaxConst);
+        }
+      }
+    }
+  }
+
+  void assumeIndexIsInBounds(BasicBlock *BB){
+    auto* LastInst = &BB->getInstList().back();
+    assert(isAnnotated(LastInst));
+    auto *Prev = LastInst->getPrevNode();
+    while (!dyn_cast<ICmpInst>(Prev)) {
+      Prev = Prev->getPrevNode();
+    }
+    // Cmp Instruction for bounds check
+    auto *ICMPInst = dyn_cast<ICmpInst>(Prev);
     Function *AssumeIntrinsic = Intrinsic::getDeclaration(
         ICMPInst->getModule(), Intrinsic::assume);
     CallInst *CI = CallInst::Create(AssumeIntrinsic, {ICMPInst});
@@ -151,7 +149,6 @@ private:
     AssumptionCache AC = getAnalysis<AssumptionCacheTracker>().getAssumptionCache(*ICMPInst->getFunction());
     AC.registerAssumption(CI);
   }
-
 };
 }
 
