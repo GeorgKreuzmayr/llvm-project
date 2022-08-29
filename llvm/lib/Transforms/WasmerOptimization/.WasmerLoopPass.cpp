@@ -31,6 +31,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/ScalarEvolution.h"
+#include <iostream>
 
 
 
@@ -48,22 +49,72 @@ public:
       return false;
     }
 
+    auto LB = getLoopBounds(L);
+    if(!LB.IndexPointer || !LB.MaxValue){
+      return false;
+    }
+
     ValueToValueMapTy  VMap;
     auto* LastPreLoopBlock = L->getLoopPreheader();
+    // Analysis Loop
+    std::vector<AllocaInst*> Allocas;
+    for(auto* BB : L->getBlocks()){
+      for(auto& Instruction : *BB){
+
+        if(auto* Alloca = dyn_cast<AllocaInst>(&Instruction)){
+          Allocas.push_back(Alloca);
+        }
+
+        if(auto* Store = dyn_cast<StoreInst>(&Instruction)){
+          for(auto* Alloca : Allocas){
+            if(Store->getOperand(1) == Alloca){
+              if(!isAnnotated(Alloca, "NotLoopIV")){
+                Alloca->addAnnotationMetadata("NotLoopIV");
+              }
+            }
+          }
+        }
+
+        if(auto* Load = dyn_cast<LoadInst>(&Instruction)){
+          if(isAnnotated(Load, "MemoryStartLoad")){
+            if(auto* GEP = dyn_cast<GEPOperator>(Load->getNextNode())){
+              if(GEP->getOperand(0) == Load && GEP->getNumOperands() == 2){
+                auto* MemAddrInstr = reinterpret_cast<llvm::Instruction*>(GEP->getOperand(1));
+                if(auto* MemAddrAdd = dyn_cast<AddOperator>(MemAddrInstr)){
+                  // Found Memory Access
+
+
+                  // Check if previous BB ends with bounds_check annotation
+                  auto* PrevBB = BB->getPrevNode();
+                  if(auto* Branch = dyn_cast<BranchInst>(&PrevBB->getInstList().back())){
+                    if(isAnnotated(Branch, "wasmer_bounds_check")){
+
+                    }
+                  }
+
+                  Load->dump();
+                  GEP->dump();
+                  MemAddrAdd->dump();
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
     for(auto* BB : L->getBlocks()){
       auto* LastInstruction = &BB->getInstList().back();
-      if(isAnnotated(LastInstruction)){
+      if(isAnnotated(LastInstruction, "wasmer_bounds_check")){
         // Last instruction is annotated branch after bounds check
         auto* Branch = dyn_cast<BranchInst>(LastInstruction);
         assert(Branch);
-        // TODO: Update PHI Nodes?
         auto* BBDash = CloneBasicBlock(BB, VMap, "_bounds_check", BB->getParent());
         VMap[BB] = BBDash;
         for(auto& Inst : *BBDash){
           RemapInstruction(&Inst, VMap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
         }
         assumeIndexIsInBounds(BB);
-        auto LB = getLoopBounds(L);
         replaceIndexWithMax(BBDash, LB.IndexPointer, LB.MaxValue);
         addBBDashToPreHeader(LastPreLoopBlock, BBDash, L);
         LastPreLoopBlock = BBDash;
@@ -82,26 +133,43 @@ public:
 private:
   struct LoopBounds {
     Value* IndexPointer;
-    int MaxValue;
+    Value* MaxValue;
   };
 
   LoopBounds getLoopBounds(Loop * L){
-    auto* BB = L->getHeader();
-    auto it = BB->begin();
-    ++it;
-    ++it;
-    auto& inst = *it;
-    auto* load = dyn_cast<LoadInst>(&inst);
-    auto* local1 = load->getOperand(0);
-    return {local1, 200000000};
+    auto* BB = L->getBlocks().back();
+    for(auto It = BB->rbegin(); It != BB->rend(); ++It){
+      if(auto* ICmp = dyn_cast<ICmpInst>(&*It)){
+        if(auto* Store = dyn_cast<StoreInst>(&(*++It))){
+          if(auto* Add = dyn_cast<AddOperator>(&(*++It))) {
+            if (auto *Load = dyn_cast<LoadInst>(&(*++It))) {
+              if(Store->getOperand(1) == Load->getOperand(0)){
+                if(ICmp->getOperand(0) == Add){
+                  std::cerr << "Bounds found: ";
+                  Load->dump();
+                  return {Load->getOperand(0), ICmp->getOperand(1)};
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return { nullptr, nullptr};
   }
 
-  bool isAnnotated(Instruction* Inst){
-    if (Inst->getMetadata(10) != nullptr) {
-      if (auto *StringMetaData =
-              dyn_cast<MDString>(Inst->getMetadata(10)->getOperand(0).get())) {
-        if (StringMetaData->getString().equals("wasmer_bounds_check")) {
-          return true;
+  bool isAnnotated(Instruction* Inst, std::string_view Annotation){
+    auto* MetaData = Inst->getMetadata(LLVMContext::MD_annotation);
+    if(!MetaData){
+      MetaData = Inst->getMetadata(10);
+    }
+    if (MetaData) {
+      for (size_t Idx = 0; Idx < MetaData->getNumOperands(); ++Idx) {
+        if (auto *StringMetaData =
+                dyn_cast<MDString>(MetaData->getOperand(Idx).get())) {
+          if (StringMetaData->getString().equals(Annotation.data())) {
+            return true;
+          }
         }
       }
     }
@@ -117,7 +185,7 @@ private:
     BBDashBranch->setSuccessor(0, L->getHeader());
   }
 
-  void replaceIndexWithMax(BasicBlock *BB, Value*IndexPointer, int MaxValue) {
+  void replaceIndexWithMax(BasicBlock *BB, Value*IndexPointer, Value* MaxValue) {
     for(auto&Instruction : *BB){
       for(uint64_t I = 0; I < Instruction.getNumOperands(); ++I){
         auto*Operand = Instruction.getOperand(I);
@@ -125,9 +193,8 @@ private:
           // Found Load of Index
           auto* Load = dyn_cast<LoadInst>(&Instruction);
           assert(Load);
-          auto* MaxConst = ConstantInt::get(Load->getType(), MaxValue, false);
           // Replace index with its maximum value
-          Instruction.replaceAllUsesWith(MaxConst);
+          Instruction.replaceAllUsesWith(MaxValue);
         }
       }
     }
@@ -135,7 +202,7 @@ private:
 
   void assumeIndexIsInBounds(BasicBlock *BB){
     auto* LastInst = &BB->getInstList().back();
-    assert(isAnnotated(LastInst));
+    assert(isAnnotated(LastInst, "wasmer_bounds_check"));
     auto *Prev = LastInst->getPrevNode();
     while (!dyn_cast<ICmpInst>(Prev)) {
       Prev = Prev->getPrevNode();
