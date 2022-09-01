@@ -44,6 +44,8 @@ struct WasmerFunctionPass : public FunctionPass {
     Instruction* MemoryStart = nullptr;
     Instruction* MaxMemory = nullptr;
     auto& ctx = F.getContext();
+
+    // Annotate Instructions
     for(auto&BasicBlock : F){
       for(auto&Instruction : BasicBlock){
         if(auto* Alloca = dyn_cast<AllocaInst>(&Instruction)){
@@ -88,20 +90,6 @@ struct WasmerFunctionPass : public FunctionPass {
                 MemoryStart = Next;
                 if(Next->getType() == PointerType::get(PointerType::getInt8PtrTy(ctx), 0)){
                   MemoryStart = Next;
-                  MemoryStart->dump();
-                  for(auto It = MemoryStart->use_begin(); It != MemoryStart->use_end(); ++It){
-                    auto& A = *It;
-
-                    auto U = A.getUser();
-                    std::cerr << "Mem Start Pooint Use" << std::endl;
-
-                    if(auto* Used = reinterpret_cast<llvm::Instruction*>(A.get())){
-                      Used->dump();
-                    }
-                    if(auto* User = reinterpret_cast<llvm::Instruction*>(U)){
-                      User->dump();
-                    }
-                  }
                   MemoryStart->addAnnotationMetadata("MemoryStartPointer");
                 }
                 Next = Next->getNextNode();
