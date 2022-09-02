@@ -34,8 +34,6 @@
 #include <iostream>
 #include <unordered_map>
 
-
-
 using namespace llvm;
 
 namespace {
@@ -47,6 +45,9 @@ public:
 
   bool runOnLoop(Loop *L, LPPassManager &LPM) override {
     if(!L->getLoopPreheader()->getParent()->getName().equals("wasmer_function__5")){
+      return false;
+    }
+    if(L->getLoopDepth() != 1){
       return false;
     }
 
@@ -147,16 +148,17 @@ public:
 
     // Analyze and fix PreLoop BoundsChecks
     auto* BBDash = FirstPreLoopBlock;
+    BBDash->dump();
     do{
       auto* LastInstruction = &BBDash->getInstList().back();
       if(isAnnotated(LastInstruction, "wasmer_bounds_check")){
         auto* BB = dyn_cast<BasicBlock>(VMap[BBDash].operator llvm::Value *());
-        if(isVectorAccess(BBDash)){
-          replaceBCIndexWithMax(BBDash, LB.IndexPointer, LB.MaxValue);
+        if(replaceBCIndexWithMax(BBDash, LB.IndexPointer, LB.MaxValue)){
           assumeIndexIsInBounds(BB);
         }
       }
       BBDash = BBDash->getNextNode();
+      BBDash->dump();
     }while(BBDash != LastPreLoopBlock);
     return true;
   }
@@ -212,24 +214,8 @@ private:
     return false;
   }
 
-  void addBBDashToPreHeader(BasicBlock *LastPreLoopBlock, BasicBlock *BBDash, Loop* L){
-    auto* PreHeaderBranch = dyn_cast<BranchInst>(&LastPreLoopBlock->getInstList().back());
-    assert(PreHeaderBranch);
-    PreHeaderBranch->setSuccessor(0, BBDash);
-    BBDash->moveAfter(LastPreLoopBlock);
-    auto* BBDashBranch = dyn_cast<BranchInst>(&BBDash->getInstList().back());
-    assert(BBDashBranch);
-    BBDashBranch->setSuccessor(0, L->getHeader());
-  }
-
-  bool isVectorAccess(BasicBlock * BB){
-    if(dyn_cast<LoadInst>(BB->getInstList().front().getNextNode())){
-      return true;
-    }
-    return false;
-  }
-
-  void replaceBCIndexWithMax(BasicBlock *BB, Value*IndexPointer, Value* MaxValue) {
+  bool replaceBCIndexWithMax(BasicBlock *BB, Value*IndexPointer, Value* MaxValue) {
+    bool ReplacedMax = false;
     for(auto&MemAddressInst : *BB){
       if(isAnnotated(&MemAddressInst, "MemAddress")){
         // TODO: Make sure only one instruction is annotated by MemAddress
@@ -287,6 +273,7 @@ private:
                 if(Load->getOperand(0) == IndexPointer){
                   // Replace Index with Max Value
                   CpyInst->setOperand(OpIndex, MaxValue);
+                  ReplacedMax = true;
                 }
               }else if(auto* Inst = dyn_cast<llvm::Instruction>(Operand)){
                 CpyInst->setOperand(OpIndex, CopiedInstructions.at(OriginalInstructionMap.find(Inst)->second));
@@ -299,6 +286,7 @@ private:
         }
       }
     }
+    return ReplacedMax;
   }
 
   void assumeIndexIsInBounds(BasicBlock *BB){
