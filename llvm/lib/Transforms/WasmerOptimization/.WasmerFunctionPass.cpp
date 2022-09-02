@@ -85,17 +85,20 @@ struct WasmerFunctionPass : public FunctionPass {
         if(auto* GEP = dyn_cast<GetElementPtrInst>(&Instruction)){
           if(GEP->getNumOperands() == 2){
             if(GEP->getOperand(0) == F.getArg(0)){
-              if(GEP->getOperand(1) == ConstantInt::get(IntegerType::getInt32Ty(ctx), 180)){
-                auto* Next = GEP->getNextNode()->getNextNode();
-                MemoryStart = Next;
-                if(Next->getType() == PointerType::get(PointerType::getInt8PtrTy(ctx), 0)){
-                  MemoryStart = Next;
-                  MemoryStart->addAnnotationMetadata("MemoryStartPointer");
-                }
-                Next = Next->getNextNode();
-                if(Next->getType() == PointerType::getInt64PtrTy(ctx)){
-                  MaxMemory = Next;
-                  MaxMemory->addAnnotationMetadata("MaxMemoryPointer");
+              if(GEP->getOperand(1) == ConstantInt::get(IntegerType::getInt32Ty(ctx), 188)){
+                if(auto* BitCast = dyn_cast<BitCastInst>(GEP->getNextNode())){
+                  if(auto* GEPMemStart = dyn_cast<GEPOperator>(BitCast->getNextNode())){
+                    if(GEPMemStart->getType() == PointerType::get(PointerType::getInt8PtrTy(ctx), 0)){
+                      MemoryStart = BitCast->getNextNode();
+                      MemoryStart->addAnnotationMetadata("MemoryStartPointer");
+                    }
+                    if(auto* GEPMaxMem = dyn_cast<GEPOperator>(MemoryStart->getNextNode())){
+                      if(GEPMaxMem->getType() == PointerType::getInt64PtrTy(ctx)){
+                        MaxMemory = MemoryStart->getNextNode();
+                        MaxMemory->addAnnotationMetadata("MaxMemoryPointer");
+                      }
+                    }
+                  }
                 }
               }
             }

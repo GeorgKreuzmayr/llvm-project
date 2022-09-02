@@ -90,6 +90,11 @@ public:
     ValueToValueMapTy  VMap;
     auto* FirstPreLoopBlock = L->getLoopPreheader();
     auto* LastPreLoopBlock = FirstPreLoopBlock;
+    auto* HeaderBlock = L->getHeader();
+
+    std::vector<BasicBlock*> OriginalBlocks;
+    std::vector<BasicBlock*> ClonedBlocks;
+    std::unordered_map<BasicBlock*, size_t> IndexMap;
     // Extract one Loop iteration to Preheader
     for(auto* BB : L->getBlocks()){
       auto* LastInstruction = &BB->getInstList().back();
@@ -101,12 +106,43 @@ public:
         for(auto& Inst : *BBDash){
           RemapInstruction(&Inst, VMap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
         }
-        /*
-        assumeIndexIsInBounds(BB);
-        replaceBCIndexWithMax(BBDash, LB.IndexPointer, LB.MaxValue);
-         */
-        addBBDashToPreHeader(LastPreLoopBlock, BBDash, L);
-        LastPreLoopBlock = BBDash;
+        IndexMap.emplace(BB, OriginalBlocks.size());
+        OriginalBlocks.push_back(BB);
+        ClonedBlocks.push_back(BBDash);
+    }
+
+    // Branch from FirstPreLoop Block to cloned Header
+    auto* ClonedHeader = dyn_cast<BasicBlock>(VMap[HeaderBlock].operator llvm::Value *());
+    auto* PreHeaderBranch = dyn_cast<BranchInst>(&FirstPreLoopBlock->getInstList().back());
+    for(size_t SuccIdx = 0; SuccIdx < PreHeaderBranch->getNumSuccessors(); ++SuccIdx){
+      if(PreHeaderBranch->getSuccessor(SuccIdx) == HeaderBlock){
+        PreHeaderBranch->setSuccessor(SuccIdx, ClonedHeader);
+      }
+    }
+
+    // Remap all Cloned Blocks
+    for(size_t Idx = 0; Idx < ClonedBlocks.size(); ++Idx){
+      auto* ClonedBlock = ClonedBlocks.at(Idx);
+      ClonedBlock->moveAfter(LastPreLoopBlock);
+      auto* LastInstruction = &ClonedBlock->getInstList().back();
+      if(auto* Branch = dyn_cast<BranchInst>(LastInstruction)){
+        for(size_t SuccIdx = 0; SuccIdx < Branch->getNumSuccessors(); ++SuccIdx){
+          auto* OldSucc = Branch->getSuccessor(SuccIdx);
+          auto OldIt = IndexMap.find(OldSucc);
+          if(OldIt != IndexMap.end()){
+            Branch->setSuccessor(SuccIdx, ClonedBlocks.at(OldIt->second));
+          }
+        }
+      }
+      LastPreLoopBlock = ClonedBlock;
+    }
+
+    // Branch from Last Pre Loop Block to old header
+    PreHeaderBranch = dyn_cast<BranchInst>(&LastPreLoopBlock->getInstList().back());
+    for(size_t SuccIdx = 0; SuccIdx < PreHeaderBranch->getNumSuccessors(); ++SuccIdx){
+      if(PreHeaderBranch->getSuccessor(SuccIdx) == ClonedHeader){
+        PreHeaderBranch->setSuccessor(SuccIdx, HeaderBlock);
+      }
     }
 
     // Analyze and fix PreLoop BoundsChecks
@@ -114,7 +150,7 @@ public:
     do{
       auto* LastInstruction = &BBDash->getInstList().back();
       if(isAnnotated(LastInstruction, "wasmer_bounds_check")){
-        auto* BB = reinterpret_cast<BasicBlock*>(VMap[BBDash].operator llvm::Value *());
+        auto* BB = dyn_cast<BasicBlock>(VMap[BBDash].operator llvm::Value *());
         if(isVectorAccess(BBDash)){
           replaceBCIndexWithMax(BBDash, LB.IndexPointer, LB.MaxValue);
           assumeIndexIsInBounds(BB);
