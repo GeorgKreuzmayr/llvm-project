@@ -148,7 +148,6 @@ public:
 
     // Analyze and fix PreLoop BoundsChecks
     auto* BBDash = FirstPreLoopBlock;
-    BBDash->dump();
     do{
       auto* LastInstruction = &BBDash->getInstList().back();
       if(isAnnotated(LastInstruction, "wasmer_bounds_check")){
@@ -158,7 +157,6 @@ public:
         }
       }
       BBDash = BBDash->getNextNode();
-      BBDash->dump();
     }while(BBDash != LastPreLoopBlock);
     return true;
   }
