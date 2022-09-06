@@ -6,7 +6,6 @@
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/Intrinsics.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/MemorySSA.h"
 #include <iostream>
@@ -15,6 +14,15 @@ using namespace llvm;
 
 namespace {
 struct WasmerFunctionPass : public FunctionPass {
+  static constexpr const char* MEMORY_START_ANNO = "MemoryStartPointer";
+  static constexpr const char* MAX_MEMORY_ANNO = "MaxMemoryPointer";
+  static constexpr const char* MEMORY_START_LOAD_ANNO = "MemoryStartLoad";
+  static constexpr const char* MAX_MEMORY_LOAD_ANNO = "MaxMemoryLoad";
+  static constexpr const char* INITIAL_STORE_ANNO = "InitialStore";
+  static constexpr const char* STORE_ANNO = "Store";
+
+
+
   static char ID;
   WasmerFunctionPass() : FunctionPass(ID) {}
 
@@ -37,67 +45,35 @@ struct WasmerFunctionPass : public FunctionPass {
   }
 
   bool runOnFunction(Function &F) override {
-    if(!F.getName().equals("wasmer_function__5")){
-      return false;
-    }
-    std::vector<AllocaInst*> Allocas;
-    Instruction* MemoryStart = nullptr;
-    Instruction* MaxMemory = nullptr;
-    auto& ctx = F.getContext();
+    auto&Ctx = F.getContext();
 
-    // Annotate Instructions
-    for(auto&BasicBlock : F){
-      for(auto&Instruction : BasicBlock){
-        if(auto* Alloca = dyn_cast<AllocaInst>(&Instruction)){
-          Alloca->addAnnotationMetadata("LocalVariable");
-          Allocas.push_back(Alloca);
-        }
+    // Find Start of Memory and Max Memory Pointer in entry block
+    for(auto&Instruction : F.getEntryBlock()){
+      if(auto* GEP = dyn_cast<GetElementPtrInst>(&Instruction)){
+        if(GEP->getNumOperands() == 2){
+          // First argument is start of metadata
+          if(GEP->getOperand(0) == F.getArg(0)){
+            // Second argument is offset of 180 or 188
+            // TODO: Check why it differs
+            if(GEP->getOperand(1) == ConstantInt::get(IntegerType::getInt32Ty(Ctx), 180)
+                || GEP->getOperand(1) == ConstantInt::get(IntegerType::getInt32Ty(Ctx), 188)){
 
-        if(auto* Load = dyn_cast<LoadInst>(&Instruction)){
-          if(Load->getOperand(0) == MaxMemory){
-            Load->addAnnotationMetadata("MaxMemoryLoad");
-          }
-          if(Load->getOperand(0) == MemoryStart){
-            Load->addAnnotationMetadata("MemoryStartLoad");
-          }
-        }
+              // Bitcast to {i8*, i64}*
+              if(auto* BitCast = dyn_cast<BitCastInst>(GEP->getNextNode())){
 
-        if(auto* Store = dyn_cast<StoreInst>(&Instruction)){
-          auto* StoreDest = Store->getOperand(1);
-          if(StoreDest == MaxMemory){
-            // Store to Max Mem
-            assert(false);
-          }
-
-          for(auto* Alloca : Allocas){
-            if(Alloca == StoreDest){
-              if(isAnnotated(Alloca, "InitialStore")){
-                if(!isAnnotated(Alloca, "Store")){
-                  Alloca->addAnnotationMetadata("Store");
+                // Retrieve Memory start
+                if(auto* GEPMemStart = dyn_cast<GEPOperator>(BitCast->getNextNode())){
+                  if(GEPMemStart->getType() == PointerType::get(PointerType::getInt8PtrTy(Ctx), 0)){
+                    auto* MemoryStart = dyn_cast<llvm::Instruction>(GEPMemStart);
+                    MemoryStart->addAnnotationMetadata(MEMORY_START_ANNO);
+                  }
                 }
-              }else{
-                Alloca->addAnnotationMetadata("InitialStore");
-              }
-            }
-          }
-        }
 
-        if(auto* GEP = dyn_cast<GetElementPtrInst>(&Instruction)){
-          if(GEP->getNumOperands() == 2){
-            if(GEP->getOperand(0) == F.getArg(0)){
-              if(GEP->getOperand(1) == ConstantInt::get(IntegerType::getInt32Ty(ctx), 188)){
-                if(auto* BitCast = dyn_cast<BitCastInst>(GEP->getNextNode())){
-                  if(auto* GEPMemStart = dyn_cast<GEPOperator>(BitCast->getNextNode())){
-                    if(GEPMemStart->getType() == PointerType::get(PointerType::getInt8PtrTy(ctx), 0)){
-                      MemoryStart = BitCast->getNextNode();
-                      MemoryStart->addAnnotationMetadata("MemoryStartPointer");
-                    }
-                    if(auto* GEPMaxMem = dyn_cast<GEPOperator>(MemoryStart->getNextNode())){
-                      if(GEPMaxMem->getType() == PointerType::getInt64PtrTy(ctx)){
-                        MaxMemory = MemoryStart->getNextNode();
-                        MaxMemory->addAnnotationMetadata("MaxMemoryPointer");
-                      }
-                    }
+                // Retrieve Max Memory
+                if(auto* GEPMaxMem = dyn_cast<GEPOperator>(BitCast->getNextNode()->getNextNode())){
+                  if(GEPMaxMem->getType() == PointerType::getInt64PtrTy(Ctx)){
+                    auto* MaxMemory = dyn_cast<llvm::Instruction>(GEPMaxMem);
+                    MaxMemory->addAnnotationMetadata(MAX_MEMORY_ANNO);
                   }
                 }
               }
@@ -106,21 +82,48 @@ struct WasmerFunctionPass : public FunctionPass {
         }
       }
     }
+
+    // Annotate Instructions
+    for(auto&BasicBlock : F){
+      for(auto&Instruction : BasicBlock){
+        // Annotate load of max memory and memory start
+        if(auto* Load = dyn_cast<LoadInst>(&Instruction)){
+          if(auto* GEP = dyn_cast<llvm::Instruction>(Load->getOperand(0))){
+            if(isAnnotated(GEP, MAX_MEMORY_ANNO)) {
+              Load->addAnnotationMetadata(MAX_MEMORY_LOAD_ANNO);
+            }else if (isAnnotated(GEP, MEMORY_START_ANNO)){
+              Load->addAnnotationMetadata(MEMORY_START_LOAD_ANNO);
+            }
+          }
+        }
+
+        // Annotate store to local variables
+        if(auto* Store = dyn_cast<StoreInst>(&Instruction)){
+          if(auto* StoreDest = dyn_cast<llvm::Instruction>(Store->getOperand(1))){
+            if(isAnnotated(StoreDest, MAX_MEMORY_ANNO)){
+              // Never allow store to MAX_MEMORY value
+              // TODO: Annotate that function should not be optimized
+              assert(false);
+            }else if(auto* Alloca = dyn_cast<AllocaInst>(StoreDest)){
+              // Annotate the if a local variable is written only once or multiple
+              // times in this function
+              // TODO: Check if we actually need this
+              if(!isAnnotated(Alloca, INITIAL_STORE_ANNO)){
+                Alloca->addAnnotationMetadata(INITIAL_STORE_ANNO);
+              }else if(!isAnnotated(Alloca, STORE_ANNO)){
+                Alloca->addAnnotationMetadata(STORE_ANNO);
+              }
+            }
+          }
+        }
+      }
+    }
+
     return false;
   }
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<AssumptionCacheTracker>();
     AU.addPreserved<AssumptionCacheTracker>();
-  }
-
-private:
-  void assumeCMPIsTrue(ICmpInst* ICMPInst){
-    Function *AssumeIntrinsic = Intrinsic::getDeclaration(
-        ICMPInst->getModule(), Intrinsic::assume);
-    CallInst *CI = CallInst::Create(AssumeIntrinsic, {ICMPInst});
-    CI->insertAfter(ICMPInst);
-    AssumptionCache AC = getAnalysis<AssumptionCacheTracker>().getAssumptionCache(*ICMPInst->getFunction());
-    AC.registerAssumption(CI);
   }
 };
 }  // end of anonymous namespace
@@ -128,69 +131,10 @@ private:
 char WasmerFunctionPass::ID = 0;
 static RegisterPass<WasmerFunctionPass> X("wasmer-function", "Hello World Pass",
                              false /* Only looks at CFG */,
-                             false /* Analysis Pass */);
+                             true /* Analysis Pass */);
 
 
 static RegisterStandardPasses Y(
     PassManagerBuilder::EP_EarlyAsPossible,
     [](const PassManagerBuilder &Builder,
        legacy::PassManagerBase &PM) { PM.add(new WasmerFunctionPass()); });
-
-void assertCmpIsTrue(){
-
-}
-
-/*
-OLD CODE
-
- ** CMPARE INDEX < 20000 **
- *
-if(auto* Load = dyn_cast<LoadInst>(ItInst)){
-  if(Load->getOperand(0)->getName().equals("local")){
-    Function *AssumeIntrinsic =
-        Intrinsic::getDeclaration(Load->getModule(), Intrinsic::assume);
-    ICmpInst *LoadLessThanBound = new ICmpInst(ICmpInst::ICMP_ULT, Load, ConstantInt::get(Load->getType(), 2000000, false));
-    LoadLessThanBound->insertAfter(Load);
-    CallInst *CI = CallInst::Create(AssumeIntrinsic, {LoadLessThanBound});
-    CI->insertAfter(LoadLessThanBound);
-    // AssumptionCache AC = getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
-    // AC.registerAssumption(CI);
-    Load->dump();
-  }
-}
-
- ** PRINT WHOLE PREV FUNCTION **
- auto* It2 = ItInst;
- while(It2->getNextNode()){
-   It2->dump();
-   It2 = It2->getNextNode();
- }
- dd.dump();
-
- if(auto*StringMetaData = dyn_cast<MDString>(
-                Instruction.getMetadata(10)->getOperand(0).get())) {
-          if (StringMetaData->getString().equals("wasmer_bounds_check")) {
-            // Found memory access with bounds check
-
-// assume vec + i less than 2000
-if(Instruction.getOperand(0)->hasName()){
-if(Instruction.getOperand(0)->getName().equals("ptr_in_bounds_expect")){
-  auto* CmpInstruction = dyn_cast<ICmpInst>(Instruction.getPrevNode()->getPrevNode());
-  auto* VecAndI = dyn_cast<AddOperator>(CmpInstruction->getOperand(0));
-  ICmpInst *VecAndICmp = new ICmpInst(ICmpInst::ICMP_ULT, VecAndI, ConstantInt::get(VecAndI->getType(), 2000, false));
-  VecAndICmp->insertBefore(CmpInstruction);
-  assumeCMPIsTrue(VecAndICmp);
-}
-}
-
-// assume ptr_in_bounds_expect == true
-auto *Prev = Instruction.getPrevNode();
-while (!dyn_cast<ICmpInst>(Prev)) {
-Prev = Prev->getPrevNode();
-}
-// Test
-// Cmp Instruction for bounds check
-auto *ICMPInst = dyn_cast<ICmpInst>(Prev);
-assumeCMPIsTrue(ICMPInst);
-}
-  */
