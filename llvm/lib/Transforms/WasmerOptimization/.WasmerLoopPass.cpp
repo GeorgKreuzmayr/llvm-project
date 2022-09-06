@@ -107,17 +107,17 @@ public:
     // Extract one Loop iteration to Preheader
     for(auto* BB : L->getBlocks()){
       auto* LastInstruction = &BB->getInstList().back();
-        auto* Branch = dyn_cast<BranchInst>(LastInstruction);
-        assert(Branch);
-        auto* BBDash = CloneBasicBlock(BB, VMap, "_bounds_check", BB->getParent());
-        VMap[BBDash] = BB;
-        VMap[BB] = BBDash;
-        for(auto& Inst : *BBDash){
-          RemapInstruction(&Inst, VMap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
-        }
-        IndexMap.emplace(BB, OriginalBlocks.size());
-        OriginalBlocks.push_back(BB);
-        ClonedBlocks.push_back(BBDash);
+      auto* Branch = dyn_cast<BranchInst>(LastInstruction);
+      assert(Branch);
+      auto* BBDash = CloneBasicBlock(BB, VMap, "_bounds_check", BB->getParent());
+      VMap[BBDash] = BB;
+      VMap[BB] = BBDash;
+      for(auto& Inst : *BBDash){
+        RemapInstruction(&Inst, VMap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+      }
+      IndexMap.emplace(BB, OriginalBlocks.size());
+      OriginalBlocks.push_back(BB);
+      ClonedBlocks.push_back(BBDash);
     }
 
     // Branch from FirstPreLoop Block to cloned Header
