@@ -39,19 +39,27 @@ using namespace llvm;
 namespace {
 class WasmerLoopPass : public LoopPass {
 public:
+  static constexpr const char* MEMORY_START_ANNO = "MemoryStartPointer";
+  static constexpr const char* MAX_MEMORY_ANNO = "MaxMemoryPointer";
+  static constexpr const char* MEMORY_START_LOAD_ANNO = "MemoryStartLoad";
+  static constexpr const char* MAX_MEMORY_LOAD_ANNO = "MaxMemoryLoad";
+  static constexpr const char* INITIAL_STORE_ANNO = "InitialStore";
+  static constexpr const char* STORE_ANNO = "Store";
+
   static char ID; // Pass ID, replacement for typeid
   WasmerLoopPass() : LoopPass(ID) {
   }
 
   bool runOnLoop(Loop *L, LPPassManager &LPM) override {
-    if(!L->getLoopPreheader()->getParent()->getName().equals("wasmer_function__5")){
-      return false;
-    }
+
+    // Only optimize most outer loop
     if(L->getLoopDepth() != 1){
       return false;
     }
 
     auto LB = getLoopBounds(L);
+    return false;
+
     if(!LB.IndexPointer || !LB.MaxValue){
       return false;
     }
@@ -174,16 +182,84 @@ private:
     Value* MaxValue;
   };
 
+  // Find value that is stored to the index value in the preheader
+  // This is the maximum value if the loop index is decremented
+  ConstantInt *findStoreToIdxInPreHeader(Loop *L, AllocaInst *Index){
+    auto* BB = L->getLoopPreheader();
+    for(auto& Instruction : *BB){
+      if(auto* Store = dyn_cast<StoreInst>(&Instruction)){
+        // Check if value stored to Index
+        if (Store->getOperand(1) == Index){
+          if(auto* MaxIdx = dyn_cast<ConstantInt>(Store->getOperand(0))){
+            // Add value size to MaxIdx
+            // TODO: Only do this, if the index is used for mem access
+            // TODO: Get bit_width = 8 from somewhere
+            auto IWidth = Index->getAllocatedType()->getIntegerBitWidth() / 8;
+            MaxIdx = dyn_cast<ConstantInt>(ConstantInt::get(MaxIdx->getType(), MaxIdx->getValue() + IWidth));
+            return MaxIdx;
+          }
+        }
+      }
+    }
+    return nullptr;
+  }
+
+  // Iterate reverse over the last loop block to find loop condition
   LoopBounds getLoopBounds(Loop * L){
     auto* BB = L->getBlocks().back();
-    for(auto It = BB->rbegin(); It != BB->rend(); ++It){
-      if(auto* ICmp = dyn_cast<ICmpInst>(&*It)){
-        if(auto* Store = dyn_cast<StoreInst>(&(*++It))){
-          if(auto* Add = dyn_cast<AddOperator>(&(*++It))) {
-            if (auto *Load = dyn_cast<LoadInst>(&(*++It))) {
-              if(Store->getOperand(1) == Load->getOperand(0)){
-                if(ICmp->getOperand(0) == Add){
-                  return {Load->getOperand(0), ICmp->getOperand(1)};
+    auto It = BB->rbegin();
+    // Find loop bounds
+    if(auto* Branch = dyn_cast<BranchInst>(&*It)){
+      if(Branch->getNumOperands() == 3){
+        if(auto* ICmp1 = dyn_cast<ICmpInst>(&*++It)){
+          if(auto* Zext = dyn_cast<ZExtInst>(&*++It)){
+            if(auto* ICmp2 = dyn_cast<ICmpInst>(&*++It)){
+              if(auto* Store = dyn_cast<StoreInst>(&(*++It))){
+                if(auto* Add = dyn_cast<AddOperator>(&(*++It))) {
+                  if (auto *Load = dyn_cast<LoadInst>(&(*++It))) {
+                    // Check if branch depends on ICMP 1
+                    if(Branch->getOperand(0) == ICmp1){
+                      // Check if zext extends ICMP 2
+                      if(Zext->getOperand(0) == ICmp2){
+                        // Check if ICMP 1 operand 1 is 0
+                        if(auto* Const = dyn_cast<ConstantInt>(ICmp1->getOperand(1))){
+                          if(Const->getValue() == 0){
+                            // Check if stored to local variable
+                            if(auto* Index = dyn_cast<AllocaInst>(Store->getOperand(1))){
+                              // Check if loaded from same variable
+                              if(Load->getOperand(0) == Index){
+                                // Check if ICMP 2 compares with added value
+                                if(ICmp2->getOperand(0) == Add){
+                                  // Check if second operand of ICMP is int constant
+                                  if(auto* MaxIdx = dyn_cast<ConstantInt>(ICmp2->getOperand(1))){
+                                    // Check if incrementing or decrementing loop
+                                    if(auto* AddValue = dyn_cast<ConstantInt>(Add->getOperand(1))){
+                                      if(AddValue->isNegative()){
+                                        MaxIdx = findStoreToIdxInPreHeader(L, Index);
+                                        if(MaxIdx){
+                                          std::cerr << "Decrement loop found" << std::endl;
+                                          Index->dump();
+                                          MaxIdx->dump();
+                                          std::cerr << "Dump end" << std::endl;
+                                          return {Index, MaxIdx};
+                                        }
+                                      }else{
+                                        std::cerr << "Incrementing loop found" << std::endl;
+                                        Index->dump();
+                                        MaxIdx->dump();
+                                        std::cerr << "Dump end" << std::endl;
+                                        return {Index, MaxIdx};
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -191,6 +267,12 @@ private:
         }
       }
     }
+
+
+    std::cerr << "failed to find loop bounds" << std::endl;
+    std::cerr << "dumping last block: " << std::endl;
+    L->getBlocks().back()->dump();
+    std::cerr << "end of last block dump" << std::endl;
     return { nullptr, nullptr};
   }
 
@@ -260,18 +342,23 @@ private:
             }
           }
 
-          // Update Operators in Copied Instructions
+          // Update Operands in Copied Instructions
           for(auto ItOg = InstructionsToCopy.rbegin(); ItOg != InstructionsToCopy.rend(); ++ItOg){
-            auto* OgInst = *ItOg;
             auto Index = OriginalInstructionMap.find(*ItOg)->second;
             auto* CpyInst = CopiedInstructions.at(Index);
             for(size_t OpIndex = 0; OpIndex < CpyInst->getNumOperands(); ++OpIndex){
               auto* Operand = CpyInst->getOperand(OpIndex);
               if(auto* Load = dyn_cast<LoadInst>(Operand)){
-                if(Load->getOperand(0) == IndexPointer){
+                assert(Load->getNumOperands() == 1);
+                if(Load->getOperand(0) == IndexPointer && Load->getNumOperands() == 1){
                   // Replace Index with Max Value
+                  assert(isAnnotated(dyn_cast<Instruction>(IndexPointer), "NotLoopIV"));
                   CpyInst->setOperand(OpIndex, MaxValue);
                   ReplacedMax = true;
+                }else{
+                  // TODO: This check doesnt work -> fix it
+                  // TODO: Check if only loaded LoopIV
+                  // assert(!isAnnotated(dyn_cast<Instruction>(Load->getOperand(0)), "NotLoopIV"));
                 }
               }else if(auto* Inst = dyn_cast<llvm::Instruction>(Operand)){
                 CpyInst->setOperand(OpIndex, CopiedInstructions.at(OriginalInstructionMap.find(Inst)->second));
