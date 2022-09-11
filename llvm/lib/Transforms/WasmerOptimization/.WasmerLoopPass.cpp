@@ -92,7 +92,7 @@ public:
         auto *BB = dyn_cast<BasicBlock>(&*VMap[BBDash]);
         // Try to replace bounds check in cloned block with max value
         if (replaceBCIndexWithMax(BBDash, LB.IndexPointer, LB.MaxIndexValue,
-                                  NonLoopInvariantLocalVariables)) {
+                                  NonLoopInvariantLocalVariables, VMap)) {
           // Assume index is in bounds for original block
           assumeIndexIsInBounds(BB);
         }
@@ -255,8 +255,7 @@ private:
     }
 
     // Branch from FirstPreLoop Block to cloned Header
-    auto *ClonedHeader =
-        dyn_cast<BasicBlock>(VMap[HeaderBlock].operator llvm::Value *());
+    auto *ClonedHeader = dyn_cast<BasicBlock>(&*VMap[HeaderBlock]);
     auto *PreHeaderBranch =
         dyn_cast<BranchInst>(&FirstPreLoopBlock->getInstList().back());
     for (size_t SuccIdx = 0; SuccIdx < PreHeaderBranch->getNumSuccessors();
@@ -299,7 +298,8 @@ private:
   // Remove all instructions from Basic Block
   void removeInstructions(std::vector<Instruction *> &CopiedInst) {
     // TODO: Fix removing instructions
-    for(auto InstIt = CopiedInst.rbegin(); InstIt != CopiedInst.rend(); ++InstIt){
+    for (auto InstIt = CopiedInst.rbegin(); InstIt != CopiedInst.rend();
+         ++InstIt) {
       // auto* Inst = *InstIt;
       // Inst->eraseFromParent();
     }
@@ -309,7 +309,8 @@ private:
   // IndexPointer, by copying instructions that are
   bool replaceBCIndexWithMax(
       BasicBlock *BB, Value *IndexPointer, Value *MaxValue,
-      std::unordered_set<Instruction *> &NonLoopInvariantLocalVariables) {
+      std::unordered_set<Instruction *> &NonLoopInvariantLocalVariables,
+      ValueToValueMapTy &VMap) {
     bool ReplacedMax = false;
     for (auto &MemAddressInst : *BB) {
       if (isAnnotated(&MemAddressInst, MemoryAccessIndex)) {
@@ -337,17 +338,14 @@ private:
           }
         }
 
+        // Copy bounds check instructions and replace index with its max value
         if (BoundsCheckCompare) {
-          // Use MaxValue in bounds check
           std::vector<llvm::Instruction *> CopiedInstructions;
           std::vector<llvm::Instruction *> InstructionsToCopy;
-          std::unordered_map<llvm::Instruction *, size_t>
-              OriginalInstructionMap;
           InstructionsToCopy.push_back(&MemAddressInst);
           CopiedInstructions.push_back(MemAddressInst.clone());
-          // Insert instruction into basic block
           CopiedInstructions.back()->insertAfter(&MemAddressInst);
-          OriginalInstructionMap.emplace(&MemAddressInst, 0);
+          VMap[InstructionsToCopy.back()] = CopiedInstructions.back();
 
           // Collect all Instructions that need to be copied
           // Iterate over all operators of an instruction and recursively add
@@ -363,11 +361,10 @@ private:
               if (auto *OpInst = dyn_cast<llvm::Instruction>(*OpIt)) {
                 if (!dyn_cast<LoadInst>(OpInst)) {
                   auto *Cloned = OpInst->clone();
-                  OriginalInstructionMap.emplace(OpInst,
-                                                 InstructionsToCopy.size());
+                  VMap[OpInst] = Cloned;
                   InstructionsToCopy.push_back(OpInst);
-                  Cloned->insertAfter(OpInst);
                   CopiedInstructions.push_back(Cloned);
+                  Cloned->insertAfter(OpInst);
                 }
               }
             }
@@ -376,7 +373,8 @@ private:
           // Update Operands in Copied Instructions
           for (int Index = InstructionsToCopy.size() - 1; Index >= 0; --Index) {
             auto *CpyInst = CopiedInstructions.at(Index);
-            // TODO: Check if CpyInst can actually point to invalid memory
+            // Replace Load of index with max value and check if other loads are
+            // loop invariant
             for (size_t OpIndex = 0; OpIndex < CpyInst->getNumOperands();
                  ++OpIndex) {
               auto *Operand = CpyInst->getOperand(OpIndex);
@@ -386,7 +384,7 @@ private:
                 auto *Alloca = dyn_cast<AllocaInst>(Load->getOperand(0));
                 // All load operands must be local variables and load must only
                 // have one operand
-                assert(Load->getNumOperands());
+                assert(Load->getNumOperands() == 1);
                 assert(Alloca);
                 if (Alloca == IndexPointer) {
                   // Replace Index with Max Value
@@ -402,50 +400,54 @@ private:
                     return false;
                   }
                 }
-              } else if (auto *Inst = dyn_cast<llvm::Instruction>(Operand)) {
-                // Replace operand with copied operand
-                auto InstIndexIt = OriginalInstructionMap.find(Inst);
-                // Every Operand must have been added to the index map in the
-                // previous loop
-                assert(InstIndexIt != OriginalInstructionMap.end());
-                CpyInst->setOperand(OpIndex,
-                                    CopiedInstructions.at(InstIndexIt->second));
               }
             }
+            // Remap known operands to cloned instructions
+            RemapInstruction(CpyInst, VMap,
+                             RF_IgnoreMissingLocals | RF_NoModuleLevelChanges);
           }
 
-          if(ReplacedMax){
+          if (ReplacedMax) {
             // Use copied instruction for bounds check
-            BoundsCheckCompare->setOperand(0, CopiedInstructions.front());
-          }else{
-            // If max could not be replace, remove all copied instructions
+            if (auto *AddWidth = dyn_cast<AddOperator>(
+                    CopiedInstructions.front()->getNextNode())) {
+              if (AddWidth->getOperand(0) == &MemAddressInst) {
+                // Replace MemAddressInst with copied instruction using max
+                // index value
+                AddWidth->setOperand(0, CopiedInstructions.front());
+                return true;
+              }
+            }
+            removeInstructions(CopiedInstructions);
+          } else {
+            // If max could not be replaced, remove all copied instructions
             removeInstructions(CopiedInstructions);
           }
         }
       }
     }
-    return ReplacedMax;
+    return false;
   }
 
   // Add assumption that index is always in bounds, so that further
   // optimization passes will remove the bounds check
   void assumeIndexIsInBounds(BasicBlock *BB) {
     auto *LastInst = &BB->getInstList().back();
-    assert(isAnnotated(LastInst, "wasmer_bounds_check"));
-    auto *Prev = LastInst->getPrevNode();
-    while (!dyn_cast<ICmpInst>(Prev)) {
-      Prev = Prev->getPrevNode();
+    assert(isAnnotated(LastInst, WasmerBoundsCheck));
+    if (auto *ICmp =
+            dyn_cast<ICmpInst>(LastInst->getPrevNode()->getPrevNode())) {
+      Function *AssumeIntrinsic =
+          Intrinsic::getDeclaration(ICmp->getModule(), Intrinsic::assume);
+      CallInst *CI = CallInst::Create(AssumeIntrinsic, {ICmp});
+      CI->insertAfter(ICmp);
+      AssumptionCache AC =
+          getAnalysis<AssumptionCacheTracker>().getAssumptionCache(
+              *ICmp->getFunction());
+      AC.registerAssumption(CI);
+    } else {
+      // Compare must happen two instructions before branch
+      assert(false);
     }
-    // Cmp Instruction for bounds check
-    auto *ICMPInst = dyn_cast<ICmpInst>(Prev);
-    Function *AssumeIntrinsic =
-        Intrinsic::getDeclaration(ICMPInst->getModule(), Intrinsic::assume);
-    CallInst *CI = CallInst::Create(AssumeIntrinsic, {ICMPInst});
-    CI->insertAfter(ICMPInst);
-    AssumptionCache AC =
-        getAnalysis<AssumptionCacheTracker>().getAssumptionCache(
-            *ICMPInst->getFunction());
-    AC.registerAssumption(CI);
   }
 };
 } // namespace llvm
