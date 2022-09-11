@@ -33,19 +33,12 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include <iostream>
 #include <unordered_map>
+#include "llvm/Transforms/WasmerPass.h"
 
-using namespace llvm;
 
-namespace {
+namespace llvm {
 class WasmerLoopPass : public LoopPass {
 public:
-  static constexpr const char* MEMORY_START_ANNO = "MemoryStartPointer";
-  static constexpr const char* MAX_MEMORY_ANNO = "MaxMemoryPointer";
-  static constexpr const char* MEMORY_START_LOAD_ANNO = "MemoryStartLoad";
-  static constexpr const char* MAX_MEMORY_LOAD_ANNO = "MaxMemoryLoad";
-  static constexpr const char* INITIAL_STORE_ANNO = "InitialStore";
-  static constexpr const char* STORE_ANNO = "Store";
-
   static char ID; // Pass ID, replacement for typeid
   WasmerLoopPass() : LoopPass(ID) {
   }
@@ -276,24 +269,6 @@ private:
     return { nullptr, nullptr};
   }
 
-  bool isAnnotated(Instruction* Inst, std::string_view Annotation){
-    auto* MetaData = Inst->getMetadata(LLVMContext::MD_annotation);
-    if(!MetaData){
-      MetaData = Inst->getMetadata(10);
-    }
-    if (MetaData) {
-      for (size_t Idx = 0; Idx < MetaData->getNumOperands(); ++Idx) {
-        if (auto *StringMetaData =
-                dyn_cast<MDString>(MetaData->getOperand(Idx).get())) {
-          if (StringMetaData->getString().equals(Annotation.data())) {
-            return true;
-          }
-        }
-      }
-    }
-    return false;
-  }
-
   bool replaceBCIndexWithMax(BasicBlock *BB, Value*IndexPointer, Value* MaxValue) {
     bool ReplacedMax = false;
     for(auto&MemAddressInst : *BB){
@@ -391,17 +366,17 @@ private:
     AC.registerAssumption(CI);
   }
 };
-}
+} // namespace llvm
 
-char WasmerLoopPass::ID = 0;
-static RegisterPass<WasmerLoopPass> X("wasmer-loop", "Hello World Pass",
+char llvm::WasmerLoopPass::ID = 0;
+static llvm::RegisterPass<llvm::WasmerLoopPass> X("wasmer-loop", "Hello World Pass",
                                           false /* Only looks at CFG */,
                                           false /* Analysis Pass */);
 
 
-static RegisterStandardPasses Y(
-    PassManagerBuilder::EP_EarlyAsPossible,
-    [](const PassManagerBuilder &Builder,
-       legacy::PassManagerBase &PM) { PM.add(new WasmerLoopPass()); });
+static llvm::RegisterStandardPasses Y(
+    llvm::PassManagerBuilder::EP_EarlyAsPossible,
+    [](const llvm::PassManagerBuilder &Builder,
+       llvm::legacy::PassManagerBase &PM) { PM.add(new llvm::WasmerLoopPass()); });
 
-Pass *llvm::createBoundsCheckLoop() { return new WasmerLoopPass(); }
+llvm::Pass *llvm::createBoundsCheckLoop() { return new WasmerLoopPass(); }
