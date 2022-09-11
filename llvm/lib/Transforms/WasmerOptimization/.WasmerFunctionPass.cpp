@@ -24,31 +24,23 @@ struct WasmerFunctionPass : public FunctionPass {
         if (GEP->getNumOperands() == 2) {
           // First argument is start of metadata
           if (GEP->getOperand(0) == F.getArg(0)) {
-            // Second argument is offset by 180 or 188
-            // TODO: Check why it differs
-            if (GEP->getOperand(1) ==
-                    ConstantInt::get(IntegerType::getInt32Ty(Ctx), 180) ||
-                GEP->getOperand(1) ==
-                    ConstantInt::get(IntegerType::getInt32Ty(Ctx), 188)) {
-
-              // Bitcast to {i8*, i64}*
-              if (auto *BitCast = dyn_cast<BitCastInst>(GEP->getNextNode())) {
-
-                // Retrieve Memory Start
-                if (auto *GEPMemStart =
-                        dyn_cast<GEPOperator>(BitCast->getNextNode())) {
-                  if (GEPMemStart->getType() ==
-                      PointerType::get(PointerType::getInt8PtrTy(Ctx), 0)) {
-                    auto *MemoryStart =
-                        dyn_cast<llvm::Instruction>(GEPMemStart);
-                    MemoryStart->addAnnotationMetadata(MemoryStartValue);
-                  }
+            // Bitcast to {i8*, i64}*
+            if (auto *BitCast = dyn_cast<BitCastInst>(GEP->getNextNode())) {
+              // Annotate Memory Start
+              if (auto *GEPMemStart =
+                      dyn_cast<GEPOperator>(BitCast->getNextNode())) {
+                if (GEPMemStart->getType() ==
+                        PointerType::get(PointerType::getInt8PtrTy(Ctx), 0) &&
+                    GEPMemStart->getOperand(0) == BitCast) {
+                  auto *MemoryStart = dyn_cast<llvm::Instruction>(GEPMemStart);
+                  MemoryStart->addAnnotationMetadata(MemoryStartValue);
                 }
 
-                // Retrieve Max Memory
+                // Annotate Max Memory
                 if (auto *GEPMaxMem = dyn_cast<GEPOperator>(
                         BitCast->getNextNode()->getNextNode())) {
-                  if (GEPMaxMem->getType() == PointerType::getInt64PtrTy(Ctx)) {
+                  if (GEPMaxMem->getType() == PointerType::getInt64PtrTy(Ctx) &&
+                      GEPMaxMem->getOperand(0) == BitCast) {
                     auto *MaxMemory = dyn_cast<llvm::Instruction>(GEPMaxMem);
                     MaxMemory->addAnnotationMetadata(MaxMemoryAnno);
                   }
