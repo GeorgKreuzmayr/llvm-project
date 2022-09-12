@@ -13,13 +13,13 @@ add_llvm_library( WasmerLoopPass MODULE
         )
 
 add_llvm_library( BoundsCheckLoopPass MODULE
-        ../Scalar/BoundsCheckLoopPass.cpp
+        ../Scalar/WasmerBoundsCheckLoopOptimization.cpp
 
         PLUGIN_TOOL
         opt
         )
 add_llvm_library( BoundsCheckPass MODULE
-        ../Scalar/BoundsCheckPass.cpp
+        ../Scalar/WasmerMemoryAccessAnalysis.cpp
 
         PLUGIN_TOOL
         opt

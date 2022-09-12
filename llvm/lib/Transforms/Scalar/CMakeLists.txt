@@ -3,8 +3,6 @@ add_llvm_component_library(LLVMScalarOpts
   AlignmentFromAssumptions.cpp
   AnnotationRemarks.cpp
   BDCE.cpp
-  BoundsCheckPass.cpp
-  BoundsCheckLoopPass.cpp
   CallSiteSplitting.cpp
   ConstantHoisting.cpp
   ConstraintElimination.cpp
@@ -79,6 +77,8 @@ add_llvm_component_library(LLVMScalarOpts
   StructurizeCFG.cpp
   TailRecursionElimination.cpp
   WarnMissedTransforms.cpp
+  WasmerMemoryAccessAnalysis.cpp
+  WasmerBoundsCheckLoopOptimization.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/Transforms

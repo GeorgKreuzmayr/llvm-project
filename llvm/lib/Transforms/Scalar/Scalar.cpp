@@ -65,8 +65,8 @@ void llvm::initializeScalarOpts(PassRegistry &Registry) {
   initializeLoopFuseLegacyPass(Registry);
   initializeLoopDataPrefetchLegacyPassPass(Registry);
   initializeLoopDeletionLegacyPassPass(Registry);
-  initializeBoundsCheckPassPass(Registry);
-  initializeBoundsCheckLoopPassPass(Registry);
+  initializeWasmerMemoryAccessAnalysisPass(Registry);
+  initializeWasmerBoundsCheckLoopOptimizationPass(Registry);
   initializeLoopAccessLegacyAnalysisPass(Registry);
   initializeLoopInstSimplifyLegacyPassPass(Registry);
   initializeLoopInterchangeLegacyPassPass(Registry);
@@ -191,12 +191,12 @@ void LLVMAddLoopDeletionPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createLoopDeletionPass());
 }
 
-void LLVMAddBoundsCheckPass(LLVMPassManagerRef PM) {
-  unwrap(PM)->add(createBoundsCheck());
+void LLVMAddWasmerMemoryAccessAnalysis(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createWasmerMemoryAccessAnalysis());
 }
 
-void LLVMAddBoundsCheckLoopPass(LLVMPassManagerRef PM) {
-  unwrap(PM)->add(createBoundsCheckLoop());
+void LLVMAddWasmerBoundsCheckLoopOptimization(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createWasmerBoundsCheckLoopOptimization());
 }
 
 void LLVMAddLoopFlattenPass(LLVMPassManagerRef PM) {

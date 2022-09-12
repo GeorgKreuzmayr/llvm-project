@@ -342,17 +342,17 @@ Pass *createLoopDeletionPass();
 
 //===----------------------------------------------------------------------===//
 //
-// LoopDeletion - This pass performs DCE of non-infinite loops that it
-// can prove are dead.
+// WasmerMemoryAccessAnalysis - This pass analysis and annotates the memory
+// accesses done by web assembly and compiled by wasmer
 //
-Pass *createBoundsCheck();
+Pass *createWasmerMemoryAccessAnalysis();
 
 //===----------------------------------------------------------------------===//
 //
-// LoopDeletion - This pass performs DCE of non-infinite loops that it
-// can prove are dead.
+// WasmerBoundsCheckLoopOptimization - This pass tries to extract the bounds
+// checks in every loop iteration to an unrolled loop iteration
 //
-Pass *createBoundsCheckLoop();
+Pass *createWasmerBoundsCheckLoopOptimization();
 
 //===----------------------------------------------------------------------===//
 //
