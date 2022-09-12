@@ -448,5 +448,3 @@ static llvm::RegisterStandardPasses
          llvm::legacy::PassManagerBase &PM) {
         PM.add(new llvm::WasmerLoopPass());
       });
-
-llvm::Pass *llvm::createBoundsCheckLoop() { return new WasmerLoopPass(); }
