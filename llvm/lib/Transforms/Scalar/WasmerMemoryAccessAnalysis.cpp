@@ -1,4 +1,4 @@
-//===- LoopDeletion.cpp - Dead Loop Deletion Pass ---------------===//
+//===- WasmerMemoryAccessAnalysis.cpp - Memory Access Analysis ------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,10 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements the Dead Loop Deletion Pass. This pass is responsible
-// for eliminating loops with non-infinite computable trip counts that have no
-// side effects or volatile instructions, and do not contribute to the
-// computation of the function's return value.
+// This analysis pass annotates the useful information concerning web assembly
+// memory accesses, compiled by wasmer. Those are used in the
+// WasmerBoundsCheckLoopOptimization.cpp
 //
 //===----------------------------------------------------------------------===//
 

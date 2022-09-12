@@ -1,4 +1,4 @@
-//===- LoopDeletion.cpp - Dead Loop Deletion Pass ---------------===//
+//===- WasmerBoundsCheckLoopOptimization.cpp - Bounds Check Optimization --===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,10 +6,11 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements the Dead Loop Deletion Pass. This pass is responsible
-// for eliminating loops with non-infinite computable trip counts that have no
-// side effects or volatile instructions, and do not contribute to the
-// computation of the function's return value.
+// This file implements the Wasmer Bounds Check Loop Optimization.
+// The optimization extracts one loop iteration to the pre loop header
+// and replaces the bounds check of the current index with its maximum value
+// if this check succeeds, the further loop iterations are done without a
+// bounds check
 //
 //===----------------------------------------------------------------------===//
 
@@ -27,8 +28,8 @@
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/Transforms/WasmerPass.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Transforms/WasmerPass.h"
 
 #include <iostream>
 #include <unordered_set>
@@ -222,9 +223,6 @@ private:
     }
 
     std::cerr << "failed to find loop bounds" << std::endl;
-    std::cerr << "dumping last block: " << std::endl;
-    L->getBlocks().back()->dump();
-    std::cerr << "end of last block dump" << std::endl;
     return {nullptr, nullptr};
   }
 
