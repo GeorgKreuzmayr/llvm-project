@@ -13,26 +13,22 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Analysis/LoopPass.h"
-#include "llvm/IR/Dominators.h"
-#include "llvm/IR/Function.h"
-#include "llvm/Pass.h"
-#include "llvm/Transforms/Scalar.h"
-#include "llvm/Transforms/Scalar/LoopPassManager.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Transforms/Utils/LoopUtils.h"
-#include "llvm/Transforms/Utils/ValueMapper.h"
-
 #include "llvm/Analysis/AssumptionCache.h"
-#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/LoopPass.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Pass.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Scalar/LoopPassManager.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 #include "llvm/Transforms/WasmerPass.h"
+
 #include <iostream>
-#include <unordered_map>
 #include <unordered_set>
 
 namespace llvm {
@@ -103,9 +99,7 @@ public:
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<ScalarEvolutionWrapperPass>();
     AU.addRequired<AssumptionCacheTracker>();
-    AU.addPreserved<AssumptionCacheTracker>();
     getLoopAnalysisUsage(AU);
   }
 
