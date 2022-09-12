@@ -112,7 +112,7 @@ public:
               // Annotate that function should not be optimized, if store to max
               // memory location
               annotateFunction(F);
-              assert(false); // TODO: Check if every triggered
+              assert(false); // TODO: Check if ever triggered
             } else if (auto *Alloca = dyn_cast<AllocaInst>(StoreDest)) {
               // Annotate the if a local variable is written only once or
               // multiple times in this function
