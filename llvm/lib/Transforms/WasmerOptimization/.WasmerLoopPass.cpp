@@ -229,70 +229,75 @@ private:
 
   // Copy all BasicBlocks from Loop to PreHeader
   LoopUnrollReturn unrollOneLoopIteration(Loop *L, ValueToValueMapTy &VMap) {
-    auto *FirstPreLoopBlock = L->getLoopPreheader();
-    auto *LastPreLoopBlock = FirstPreLoopBlock;
-    auto *HeaderBlock = L->getHeader();
+    auto *LoopPreHeaderBlock = L->getLoopPreheader();
+    // Require initial loop to have preheader
+    assert(LoopPreHeaderBlock);
+    auto *LastPreLoopBlock = LoopPreHeaderBlock;
+    // First loop block
+    auto *FirstLoopBlock = L->getHeader();
 
-    std::vector<BasicBlock *> OriginalBlocks;
+    // TODO: Ask Moritz: std::vector reserve?
     std::vector<BasicBlock *> ClonedBlocks;
-    std::unordered_map<BasicBlock *, size_t> IndexMap;
-    // Extract one Loop iteration to Preheader
+    // Extract one Loop iteration
     for (auto *BB : L->getBlocks()) {
       auto *LastInstruction = &BB->getInstList().back();
       auto *Branch = dyn_cast<BranchInst>(LastInstruction);
       assert(Branch);
       auto *BBDash =
           CloneBasicBlock(BB, VMap, "_bounds_check", BB->getParent());
+      // TODO: Ask Moritz: Is this allowed? (mapped in both directions)
       VMap[BBDash] = BB;
       VMap[BB] = BBDash;
       for (auto &Inst : *BBDash) {
         RemapInstruction(&Inst, VMap,
                          RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
       }
-      IndexMap.emplace(BB, OriginalBlocks.size());
-      OriginalBlocks.push_back(BB);
       ClonedBlocks.push_back(BBDash);
     }
 
-    // Branch from FirstPreLoop Block to cloned Header
-    auto *ClonedHeader = dyn_cast<BasicBlock>(&*VMap[HeaderBlock]);
+    // Insert cloned blocks after pre header
+    auto *ClonedFirstLoopBlock = dyn_cast<BasicBlock>(&*VMap[FirstLoopBlock]);
     auto *PreHeaderBranch =
-        dyn_cast<BranchInst>(&FirstPreLoopBlock->getInstList().back());
+        dyn_cast<BranchInst>(&LoopPreHeaderBlock->getInstList().back());
+    assert(PreHeaderBranch);
     for (size_t SuccIdx = 0; SuccIdx < PreHeaderBranch->getNumSuccessors();
          ++SuccIdx) {
-      if (PreHeaderBranch->getSuccessor(SuccIdx) == HeaderBlock) {
-        PreHeaderBranch->setSuccessor(SuccIdx, ClonedHeader);
+      // Branch from Pre Header to cloned first loop block
+      if (PreHeaderBranch->getSuccessor(SuccIdx) == FirstLoopBlock) {
+        PreHeaderBranch->setSuccessor(SuccIdx, ClonedFirstLoopBlock);
       }
     }
 
-    // Remap all Cloned Blocks
+    // Remap all branch of cloned blocks
     for (size_t Idx = 0; Idx < ClonedBlocks.size(); ++Idx) {
       auto *ClonedBlock = ClonedBlocks.at(Idx);
+      // Insert all cloned loop blocks before actual loop
       ClonedBlock->moveAfter(LastPreLoopBlock);
       auto *LastInstruction = &ClonedBlock->getInstList().back();
-      if (auto *Branch = dyn_cast<BranchInst>(LastInstruction)) {
-        for (size_t SuccIdx = 0; SuccIdx < Branch->getNumSuccessors();
-             ++SuccIdx) {
-          auto *OldSucc = Branch->getSuccessor(SuccIdx);
-          auto OldIt = IndexMap.find(OldSucc);
-          if (OldIt != IndexMap.end()) {
-            Branch->setSuccessor(SuccIdx, ClonedBlocks.at(OldIt->second));
-          }
+      auto *Branch = dyn_cast<BranchInst>(LastInstruction);
+      assert(Branch);
+      for (size_t SuccIdx = 0; SuccIdx < Branch->getNumSuccessors();
+           ++SuccIdx) {
+        auto *OldSucc = Branch->getSuccessor(SuccIdx);
+        auto NewSuccIt = VMap[OldSucc];
+        if (NewSuccIt.pointsToAliveValue()) {
+          Branch->setSuccessor(SuccIdx, dyn_cast<BasicBlock>(&*NewSuccIt));
         }
       }
       LastPreLoopBlock = ClonedBlock;
     }
 
-    // Branch from Last Pre Loop Block to old header
-    PreHeaderBranch =
+    // Branch from last cloned block to first loop block
+    auto *LastClonedBlockBranch =
         dyn_cast<BranchInst>(&LastPreLoopBlock->getInstList().back());
-    for (size_t SuccIdx = 0; SuccIdx < PreHeaderBranch->getNumSuccessors();
-         ++SuccIdx) {
-      if (PreHeaderBranch->getSuccessor(SuccIdx) == ClonedHeader) {
-        PreHeaderBranch->setSuccessor(SuccIdx, HeaderBlock);
+    for (size_t SuccIdx = 0;
+         SuccIdx < LastClonedBlockBranch->getNumSuccessors(); ++SuccIdx) {
+      if (LastClonedBlockBranch->getSuccessor(SuccIdx) ==
+          ClonedFirstLoopBlock) {
+        LastClonedBlockBranch->setSuccessor(SuccIdx, FirstLoopBlock);
       }
     }
-    return {FirstPreLoopBlock, LastPreLoopBlock};
+    return {LoopPreHeaderBlock, LastPreLoopBlock};
   }
 
   // Remove all instructions from Basic Block
