@@ -1,8 +1,6 @@
 #include "llvm/IR/Function.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/raw_ostream.h"
 
-#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/MemorySSA.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -107,10 +105,6 @@ struct WasmerFunctionPass : public FunctionPass {
     }
 
     return false;
-  }
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<AssumptionCacheTracker>();
-    AU.addPreserved<AssumptionCacheTracker>();
   }
 };
 } // namespace llvm

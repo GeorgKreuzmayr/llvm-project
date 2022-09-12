@@ -1,18 +1,3 @@
-//===- LoopDeletion.cpp - Dead Loop Deletion Pass ---------------===//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
-//===----------------------------------------------------------------------===//
-//
-// This file implements the Dead Loop Deletion Pass. This pass is responsible
-// for eliminating loops with non-infinite computable trip counts that have no
-// side effects or volatile instructions, and do not contribute to the
-// computation of the function's return value.
-//
-//===----------------------------------------------------------------------===//
-
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/IR/Function.h"
