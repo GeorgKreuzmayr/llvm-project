@@ -15,6 +15,7 @@ struct WasmerFunctionPass : public FunctionPass {
 
   bool runOnFunction(Function &F) override {
     auto &Ctx = F.getContext();
+    return false;
 
     // Find Start of Memory and Max Memory Pointer in entry block
     for (auto &Instruction : F.getEntryBlock()) {

@@ -15,6 +15,7 @@ static constexpr const char *StoreAnno = "Store";
 static constexpr const char *FunctionNotOptimizeAnno = "DoNotOptimizeFunction";
 static constexpr const char *AccessHeapMemory = "HeapMemAcc";
 static constexpr const char *MemoryAccessIndex = "MemoryAccessIndex";
+static constexpr const char *GEPMemoryAccess = "MemoryAccess";
 static constexpr const char *WasmerBoundsCheck = "wasmer_bounds_check";
 
 inline void annotateFunction(Function &F) {
