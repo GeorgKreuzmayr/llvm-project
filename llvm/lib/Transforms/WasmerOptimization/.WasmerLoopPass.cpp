@@ -108,6 +108,9 @@ public:
     }
 
     auto UnrollRes = unrollOneLoopIteration(L, VMap);
+    if(!UnrollRes.HeaderEnd ||UnrollRes.HeaderStart){
+      return false;
+    }
 
     std::cerr << std::endl << std::endl << std::endl << std::endl;
     // Manipulate Loop
