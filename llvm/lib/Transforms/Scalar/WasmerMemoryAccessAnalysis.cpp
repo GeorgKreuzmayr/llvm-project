@@ -95,10 +95,10 @@ public:
                     dyn_cast<llvm::Instruction>(GEP->getOperand(0))) {
               if (isAnnotated(FirstOp, LoadMemoryStart)) {
                 Instruction.addAnnotationMetadata(AccessHeapMemory);
-              }
-              if (auto *SecondOp =
-                      dyn_cast<llvm::Instruction>(GEP->getOperand(1))) {
-                SecondOp->addAnnotationMetadata(MemoryAccessIndex);
+                if (auto *SecondOp =
+                        dyn_cast<llvm::Instruction>(GEP->getOperand(1))) {
+                  SecondOp->addAnnotationMetadata(MemoryAccessIndex);
+                }
               }
             }
           }

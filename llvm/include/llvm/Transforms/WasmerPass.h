@@ -17,6 +17,12 @@ static constexpr const char *AccessHeapMemory = "HeapMemAcc";
 static constexpr const char *MemoryAccessIndex = "MemoryAccessIndex";
 static constexpr const char *GEPMemoryAccess = "MemoryAccess";
 static constexpr const char *WasmerBoundsCheck = "wasmer_bounds_check";
+static constexpr const char *NonLoopIV = "NonLoopIV";
+static constexpr const char *InductionVariableAnno = "InductionVariableAnno";
+static constexpr const char *RemoveBC = "RemoveBC";
+
+
+
 
 inline void annotateFunction(Function &F) {
   MDBuilder MDB(F.getContext());
