@@ -33,6 +33,9 @@ public:
     ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
     auto lb = L->getBounds(SE);
     auto InductionVariable = L->getInductionVariable(SE);
+    if(!InductionVariable){
+      return false;
+    }
     InductionVariable->addAnnotationMetadata(InductionVariableAnno);
     Value *Max = nullptr;
     if (lb) {
@@ -68,14 +71,17 @@ public:
           std::vector<Instruction *> InstructionsUsedForBC;
           InstructionsUsedForBC.push_back(BCCompare);
 
+          BB->dump();
           // Collect all non loop invariant instructions to calculate bounds
           // check
           size_t MaxIdx = 1;
           for (size_t CopyStartIdx = 0; CopyStartIdx != MaxIdx;
                ++CopyStartIdx) {
             auto *Next = InstructionsUsedForBC.at(CopyStartIdx);
+            Next->dump();
             for (size_t OpIdx = 0; OpIdx < Next->getNumOperands(); ++OpIdx) {
               auto *Operand = Next->getOperand(OpIdx);
+              Operand->dump();
               if (L->isLoopInvariant(Operand)) {
                 std::cerr << "Loop Invariant: ";
                 Operand->dump();
@@ -89,12 +95,16 @@ public:
                         GEPMemoryAccess);
                   }
                 }
-                if (OpInst != InductionVariable) {
+                if(isa<PHINode>(OpInst)){
+                  if(OpInst != InductionVariable){
+                    return false;
+                  }
+                  std::cerr << "Found induction use" << std::endl;
+
+                } else {
                   OpInst->addAnnotationMetadata(NonLoopIV);
                   InstructionsUsedForBC.push_back(OpInst);
                   ++MaxIdx;
-                } else {
-                  std::cerr << "Found induction use" << std::endl;
                 }
               } else {
                 std::cerr << "This is unexpected, found a: ";
@@ -108,7 +118,7 @@ public:
     }
 
     auto UnrollRes = unrollOneLoopIteration(L, VMap);
-    if(!UnrollRes.HeaderEnd ||UnrollRes.HeaderStart){
+    if(!UnrollRes.HeaderEnd || !UnrollRes.HeaderStart){
       return false;
     }
 
@@ -204,7 +214,7 @@ public:
         }
       }
     }
-    return false;
+    return true;
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
@@ -252,6 +262,13 @@ private:
     // First loop block
     auto *FirstLoopBlock = L->getHeader();
 
+    for(auto* BB : L->getBlocks()){
+      BB->dump();
+      if(!dyn_cast<BranchInst>(&BB->getInstList().back())){
+        return {nullptr, nullptr};
+      }
+    }
+
     // TODO: Ask Moritz: std::vector reserve?
     std::vector<BasicBlock *> ClonedBlocks;
     // Extract one Loop iteration
@@ -298,6 +315,22 @@ private:
         auto NewSuccIt = VMap[OldSucc];
         if (NewSuccIt.pointsToAliveValue()) {
           Branch->setSuccessor(SuccIdx, dyn_cast<BasicBlock>(&*NewSuccIt));
+        }else{
+          if(auto* OldSuccPhi = dyn_cast<PHINode>(&OldSucc->getInstList().front())){
+            for(size_t IdxOSP = 0; IdxOSP < OldSuccPhi->getNumIncomingValues(); ++IdxOSP){
+              auto* OgBlock = dyn_cast<BasicBlock>(&*VMap[ClonedBlock]);
+              if(OldSuccPhi->getIncomingBlock(IdxOSP) == OgBlock){
+                auto* OgValueForPhi = OldSuccPhi->getIncomingValue(IdxOSP);
+                auto ProbCopyOgValueForPhi = VMap[OgValueForPhi];
+                if(ProbCopyOgValueForPhi.pointsToAliveValue()){
+                  OldSuccPhi->addIncoming(dyn_cast<Value>(&*ProbCopyOgValueForPhi), ClonedBlock);
+                }else{
+                  OldSuccPhi->addIncoming(OgValueForPhi, ClonedBlock);
+                }
+              }
+            }
+
+          }
         }
       }
       LastPreLoopBlock = ClonedBlock;
