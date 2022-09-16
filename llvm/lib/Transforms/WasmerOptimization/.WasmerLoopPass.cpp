@@ -60,6 +60,10 @@ public:
       return false;
     }
 
+    if(!Max){
+      return false;
+    }
+
     std::unordered_set<Instruction *> NonLoopInvariantLocalVariables;
     ValueToValueMapTy VMap;
 
@@ -155,9 +159,12 @@ public:
           for (auto RevIt = BCInstructions.rbegin();
                RevIt != BCInstructions.rend(); ++RevIt) {
             auto *Instr = *RevIt;
+            std::cerr << "OG:";
             Instr->dump();
             auto *ClonedInst = Instr->clone();
             ClonedInst->insertAfter(Instr);
+            std::cerr << "Cloned:";
+            ClonedInst->dump();
             VMap[Instr] = ClonedInst;
             for (size_t OpIdx = 0; OpIdx < ClonedInst->getNumOperands();
                  ++OpIdx) {
@@ -214,6 +221,16 @@ public:
         }
       }
     }
+
+    std::cerr << std::endl << std::endl << std::endl;
+
+    for(auto* BB : L->getBlocks()){
+      std::cerr << "OG BLOCK" << std::endl;
+      BB->dump();
+      std::cerr << "Cloned BLOCK" << std::endl;
+      dyn_cast<BasicBlock>(&*VMap[BB])->dump();
+    }
+
     return true;
   }
 
@@ -317,6 +334,7 @@ private:
           Branch->setSuccessor(SuccIdx, dyn_cast<BasicBlock>(&*NewSuccIt));
         }else{
           if(auto* OldSuccPhi = dyn_cast<PHINode>(&OldSucc->getInstList().front())){
+            // TODO: This is super HIGH RISK!!!!
             for(size_t IdxOSP = 0; IdxOSP < OldSuccPhi->getNumIncomingValues(); ++IdxOSP){
               auto* OgBlock = dyn_cast<BasicBlock>(&*VMap[ClonedBlock]);
               if(OldSuccPhi->getIncomingBlock(IdxOSP) == OgBlock){
