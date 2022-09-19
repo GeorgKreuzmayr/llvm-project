@@ -67,28 +67,26 @@ public:
     std::unordered_set<Instruction *> NonLoopInvariantLocalVariables;
     ValueToValueMapTy VMap;
 
+    bool FoundMemAcc = false;
+
     // Analyze Loop
     for (auto *BB : L->getBlocks()) {
       auto &LastInst = BB->getInstList().back();
       if (isAnnotated(&LastInst, WasmerBoundsCheck)) {
+        FoundMemAcc = true;
         if (auto *BCCompare = dyn_cast<ICmpInst>(LastInst.getPrevNode())) {
           std::vector<Instruction *> InstructionsUsedForBC;
           InstructionsUsedForBC.push_back(BCCompare);
 
-          BB->dump();
           // Collect all non loop invariant instructions to calculate bounds
           // check
           size_t MaxIdx = 1;
           for (size_t CopyStartIdx = 0; CopyStartIdx != MaxIdx;
                ++CopyStartIdx) {
             auto *Next = InstructionsUsedForBC.at(CopyStartIdx);
-            Next->dump();
             for (size_t OpIdx = 0; OpIdx < Next->getNumOperands(); ++OpIdx) {
               auto *Operand = Next->getOperand(OpIdx);
-              Operand->dump();
               if (L->isLoopInvariant(Operand)) {
-                std::cerr << "Loop Invariant: ";
-                Operand->dump();
               } else if (auto *OpInst = dyn_cast<Instruction>(Operand)) {
                 for (auto *OpUser : OpInst->users()) {
                   if (isa<GEPOperator>(OpUser)) {
@@ -120,6 +118,9 @@ public:
         }
       }
     }
+    if(!FoundMemAcc){
+      return false;
+    }
 
     auto UnrollRes = unrollOneLoopIteration(L, VMap);
     if(!UnrollRes.HeaderEnd || !UnrollRes.HeaderStart){
@@ -130,7 +131,6 @@ public:
     // Manipulate Loop
     for (auto *BB = UnrollRes.HeaderStart; BB != UnrollRes.HeaderEnd;
          BB = BB->getNextNode()) {
-      BB->dump();
       for (auto &Inst : BB->getInstList()) {
         if (isAnnotated(&Inst, MemoryAccessIndex)) {
           std::vector<Instruction *> BCInstructions;
@@ -159,12 +159,8 @@ public:
           for (auto RevIt = BCInstructions.rbegin();
                RevIt != BCInstructions.rend(); ++RevIt) {
             auto *Instr = *RevIt;
-            std::cerr << "OG:";
-            Instr->dump();
             auto *ClonedInst = Instr->clone();
             ClonedInst->insertAfter(Instr);
-            std::cerr << "Cloned:";
-            ClonedInst->dump();
             VMap[Instr] = ClonedInst;
             for (size_t OpIdx = 0; OpIdx < ClonedInst->getNumOperands();
                  ++OpIdx) {
@@ -190,7 +186,6 @@ public:
           auto *MemAccIdx = BCInstructions.front();
           auto *ClonedMemAccIdx = dyn_cast<Instruction>(&(*VMap[MemAccIdx]));
           for (auto *User : BCInstructions.front()->users()) {
-            User->dump();
             if (!isa<GEPOperator>(User)) {
               if (auto *Instr = dyn_cast<Instruction>(User)) {
                 for (size_t OpIdx = 0; OpIdx < Instr->getNumOperands();
@@ -214,23 +209,12 @@ public:
 
     // Assume index is in bounds
     for(auto* BB : L->getBlocks()){
-      BB->dump();
       if(isAnnotated(&BB->getInstList().back(), RemoveBC)){
         if(auto* Branch = dyn_cast<BranchInst>(&BB->getInstList().back())){
           Branch->setCondition(ConstantInt::getFalse(Branch->getCondition()->getContext()));
         }
       }
     }
-
-    std::cerr << std::endl << std::endl << std::endl;
-
-    for(auto* BB : L->getBlocks()){
-      std::cerr << "OG BLOCK" << std::endl;
-      BB->dump();
-      std::cerr << "Cloned BLOCK" << std::endl;
-      dyn_cast<BasicBlock>(&*VMap[BB])->dump();
-    }
-
     return true;
   }
 
@@ -280,7 +264,6 @@ private:
     auto *FirstLoopBlock = L->getHeader();
 
     for(auto* BB : L->getBlocks()){
-      BB->dump();
       if(!dyn_cast<BranchInst>(&BB->getInstList().back())){
         return {nullptr, nullptr};
       }
@@ -347,7 +330,6 @@ private:
                 }
               }
             }
-
           }
         }
       }
@@ -365,17 +347,22 @@ private:
       }
     }
 
-    if (auto *PhiNode =
-            dyn_cast<PHINode>(&FirstLoopBlock->getInstList().front())) {
-      for (size_t OpIdx = 0; OpIdx < PhiNode->getNumIncomingValues(); ++OpIdx) {
-        auto *OldIncomingBlock = PhiNode->getIncomingBlock(OpIdx);
-        if (OldIncomingBlock == LoopPreHeaderBlock) {
-          PhiNode->setIncomingBlock(OpIdx, LastPreLoopBlock);
+    for(auto& Inst: FirstLoopBlock->getInstList()) {
+      if (auto *PhiNode = dyn_cast<PHINode>(&Inst)) {
+        for (size_t OpIdx = 0; OpIdx < PhiNode->getNumIncomingValues();
+             ++OpIdx) {
+          auto *OldIncomingBlock = PhiNode->getIncomingBlock(OpIdx);
+          if (OldIncomingBlock == LoopPreHeaderBlock) {
+            PhiNode->setIncomingBlock(OpIdx, LastPreLoopBlock);
+          }
         }
+      } else {
+        break;
       }
     }
 
-    for (auto *ClonedBlock : ClonedBlocks) {
+
+      for (auto *ClonedBlock : ClonedBlocks) {
       if (auto *FirstInstruction =
               dyn_cast<PHINode>(&ClonedBlock->getInstList().front())) {
         std::vector<size_t> ToDelIdx;
@@ -398,9 +385,7 @@ private:
         for (auto DelIdx : ToDelIdx) {
           FirstInstruction->removeIncomingValue(DelIdx);
         }
-        FirstInstruction->dump();
         auto *OgBlock = dyn_cast<BasicBlock>(&*VMap[ClonedBlock]);
-        OgBlock->getInstList().front().dump();
       }
     }
     return {LoopPreHeaderBlock, LastPreLoopBlock};
