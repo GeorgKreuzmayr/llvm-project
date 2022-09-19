@@ -68,14 +68,11 @@ public:
             Loop::LoopBounds::Direction::Increasing) {
           Max = &lb.getValue().getFinalIVValue();
           std::cerr << "Min: ";
-          lb.getValue().getInitialIVValue().dump();
         } else {
           Max = &lb.getValue().getInitialIVValue();
           std::cerr << "Min: ";
-          lb.getValue().getFinalIVValue().dump();
         }
         std::cerr << "IV: ";
-        L->getInductionVariable(SE)->dump();
       }
 
     } else {
@@ -132,7 +129,6 @@ public:
                 }
               } else {
                 std::cerr << "This is unexpected, found a: ";
-                Operand->dump();
                 assert(false);
               }
             }
@@ -237,7 +233,7 @@ public:
         }
       }
     }
-    std::cerr << "SUCCESSFULL BOUND EXTRACTION" << std::endl;
+    std::cerr << "SUCCESSFULL BOUND EXTRACTION for:" << L->getBlocks().front()->getParent()->getName().data() << std::endl;
     return true;
   }
 
