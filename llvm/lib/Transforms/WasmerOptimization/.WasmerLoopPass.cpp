@@ -14,8 +14,11 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include "llvm/Transforms/WasmerPass.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+
 
 #include <iostream>
+#include <optional>
 #include <unordered_set>
 
 namespace llvm {
@@ -24,31 +27,133 @@ public:
   static char ID; // Pass ID, replacement for typeid
   WasmerLoopPass() : LoopPass(ID) {}
 
+  BasicBlock*createBasicBlockWithBCInstructions(ValueToValueMapTy& VMap, std::vector<Instruction*>& BCInstructions, BasicBlock* BB, Instruction* InductionVariable, Value* Max){
+    BasicBlock* BCBlock = BasicBlock::Create(BB->getContext(), "", BB->getParent());
+    for(auto InstIt = BCInstructions.rbegin(); InstIt != BCInstructions.rend(); ++InstIt){
+      auto* Inst = *InstIt;
+      auto* ClonedInst = Inst->clone();
+      VMap[Inst] = ClonedInst;
+      for(size_t OpIdx = 0; OpIdx < ClonedInst->getNumOperands(); ++OpIdx){
+        if(ClonedInst->getOperand(OpIdx) == InductionVariable){
+          ClonedInst->setOperand(OpIdx, Max);
+        }else{
+          auto ClonedOp = VMap[ClonedInst->getOperand(OpIdx)];
+          if(ClonedOp.pointsToAliveValue()){
+            ClonedInst->setOperand(OpIdx, dyn_cast<Value>(&*ClonedOp));
+          }
+        }
+      }
+      BCBlock->getInstList().push_back(ClonedInst);
+    }
+    return BCBlock;
+  }
+
+  bool moveBCToBeforeLoop(BasicBlock* BCBlock, BasicBlock*LastPreLoopBlock, BasicBlock* FirstLoopBlock){
+    auto* PreLoopBranch = dyn_cast<BranchInst>(&LastPreLoopBlock->getInstList().back());
+    if(!PreLoopBranch){
+      assert(false);
+      return false;
+    }
+    int FirstLoopDest = -1;
+    for(size_t PreLoopSuccIdx = 0; PreLoopSuccIdx < PreLoopBranch->getNumSuccessors(); ++PreLoopSuccIdx){
+      if(PreLoopBranch->getSuccessor(PreLoopSuccIdx) == FirstLoopBlock){
+        FirstLoopDest = (int) PreLoopSuccIdx;
+      }
+    }
+    if(FirstLoopDest == -1){
+      assert(false);
+      return false;
+    }
+    // Branch from LastPreLoopBlock to the BCBlock instead of to the loop
+    PreLoopBranch->setSuccessor(FirstLoopDest, BCBlock);
+
+    // Fix Phi Nodes of First Loop Block
+    for(auto& Inst : FirstLoopBlock->getInstList()){
+      if(auto* Phi = dyn_cast<PHINode>(&Inst)){
+        for(size_t PHIIdx = 0; PHIIdx < Phi->getNumIncomingValues(); ++PHIIdx){
+          if(Phi->getIncomingBlock(PHIIdx) == LastPreLoopBlock){
+            Phi->setIncomingBlock(PHIIdx, BCBlock);
+          }
+        }
+      }else{
+        break;
+      }
+    }
+    return true;
+  }
+
+  /*
+   * This function clones all Instructions that are used to perform a bounds
+   * check for one memory access and adds them to the pre loop header.
+   */
+  std::vector<Instruction*> extractBcInstructions(Instruction* MemoryAccessBranch, Loop* L, Instruction* InductionVariable){
+    if (auto *BCCompare = dyn_cast<ICmpInst>(MemoryAccessBranch->getPrevNode())) {
+      std::vector<Instruction *> InstructionsUsedForBC;
+      InstructionsUsedForBC.push_back(BCCompare);
+
+      // Collect all non loop invariant instructions to calculate bounds
+      // check
+      size_t MaxIdx = 1;
+      for (size_t CopyStartIdx = 0; CopyStartIdx != MaxIdx;
+           ++CopyStartIdx) {
+        auto *Next = InstructionsUsedForBC.at(CopyStartIdx);
+        for (size_t OpIdx = 0; OpIdx < Next->getNumOperands(); ++OpIdx) {
+          auto *Operand = Next->getOperand(OpIdx);
+          if (L->isLoopInvariant(Operand)) {
+          } else if (auto *OpInst = dyn_cast<Instruction>(Operand)) {
+            for (auto *OpUser : OpInst->users()) {
+              if (isa<GEPOperator>(OpUser)) {
+                // TODO: Improve this annotation
+                dyn_cast<Instruction>(Operand)->addAnnotationMetadata(
+                    MemoryAccessIndex);
+                dyn_cast<Instruction>(OpUser)->addAnnotationMetadata(
+                    GEPMemoryAccess);
+              }
+            }
+            if(auto* Phi = dyn_cast<PHINode>(OpInst)){
+              if(OpInst != InductionVariable){
+                return {};
+              }
+              std::cerr << "Found induction use" << std::endl;
+            } else {
+              InstructionsUsedForBC.push_back(OpInst);
+              ++MaxIdx;
+            }
+          } else {
+            std::cerr << "This is unexpected, found a: ";
+            Operand->dump();
+            assert(false);
+          }
+        }
+      }
+      return InstructionsUsedForBC;
+    }
+    return {};
+  }
+
   bool runOnLoop(Loop *L, LPPassManager &LPM) override {
-
-
     ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-    auto lb = L->getBounds(SE);
-    auto InductionVariable = L->getInductionVariable(SE);
+    auto LB = L->getBounds(SE);
+    auto* InductionVariable = L->getInductionVariable(SE);
     if(!InductionVariable){
       return false;
     }
     InductionVariable->addAnnotationMetadata(InductionVariableAnno);
     Value *Max = nullptr;
-    if (lb) {
-      if (isa<ConstantInt>(&lb.getValue().getInitialIVValue()) &&
-          isa<ConstantInt>(&lb.getValue().getFinalIVValue())) {
+    if (LB) {
+      if (isa<ConstantInt>(&LB.getValue().getInitialIVValue()) &&
+          isa<ConstantInt>(&LB.getValue().getFinalIVValue())) {
         std::cerr << "Max: ";
-        if (lb.getValue().getDirection() ==
+        if (LB.getValue().getDirection() ==
             Loop::LoopBounds::Direction::Increasing) {
-          Max = &lb.getValue().getFinalIVValue();
-          lb.getValue().getFinalIVValue().dump();
+          Max = &LB.getValue().getFinalIVValue();
+          LB.getValue().getFinalIVValue().dump();
           std::cerr << "Min: ";
-          lb.getValue().getInitialIVValue().dump();
+          LB.getValue().getInitialIVValue().dump();
         } else {
-          Max = &lb.getValue().getInitialIVValue();
+          Max = &LB.getValue().getInitialIVValue();
           std::cerr << "Min: ";
-          lb.getValue().getFinalIVValue().dump();
+          LB.getValue().getFinalIVValue().dump();
         }
         std::cerr << "IV: ";
         L->getInductionVariable(SE)->dump();
@@ -62,173 +167,57 @@ public:
       return false;
     }
 
-    // Only optimize most outer loop
-    if (L->getLoopDepth() != 1) {
-      //return false;
+    ValueToValueMapTy VMap;
+    BasicBlock*LastPreLoopBlock = L->getLoopPreheader();
+    BasicBlock* FirstLoopBlock = L->getBlocks().front();
+    if(!LastPreLoopBlock){
+      std::cerr << "Failed to find Loop Pre Header" << std::endl;
+    }
+    std::unordered_set<BasicBlock*> LoopBlocks;
+
+    for (auto* BB : L->getBlocks()){
+      LoopBlocks.insert(BB);
     }
 
-    std::unordered_set<Instruction *> NonLoopInvariantLocalVariables;
-    ValueToValueMapTy VMap;
-
-    bool FoundMemAcc = false;
-
-    // Analyze Loop
     for (auto *BB : L->getBlocks()) {
       auto &LastInst = BB->getInstList().back();
       if (isAnnotated(&LastInst, WasmerBoundsCheck)) {
-        FoundMemAcc = true;
-        if (auto *BCCompare = dyn_cast<ICmpInst>(LastInst.getPrevNode())) {
-          std::vector<Instruction *> InstructionsUsedForBC;
-          InstructionsUsedForBC.push_back(BCCompare);
-
-          // Collect all non loop invariant instructions to calculate bounds
-          // check
-          size_t MaxIdx = 1;
-          for (size_t CopyStartIdx = 0; CopyStartIdx != MaxIdx;
-               ++CopyStartIdx) {
-            auto *Next = InstructionsUsedForBC.at(CopyStartIdx);
-            for (size_t OpIdx = 0; OpIdx < Next->getNumOperands(); ++OpIdx) {
-              auto *Operand = Next->getOperand(OpIdx);
-              if (L->isLoopInvariant(Operand)) {
-              } else if (auto *OpInst = dyn_cast<Instruction>(Operand)) {
-                for (auto *OpUser : OpInst->users()) {
-                  if (isa<GEPOperator>(OpUser)) {
-                    // TODO: Improve this annotation
-                    dyn_cast<Instruction>(Operand)->addAnnotationMetadata(
-                        MemoryAccessIndex);
-                    dyn_cast<Instruction>(OpUser)->addAnnotationMetadata(
-                        GEPMemoryAccess);
-                  }
-                }
-                if(auto* Phi = dyn_cast<PHINode>(OpInst)){
-                  BB->dump();
-                  if(OpInst != InductionVariable){
-                    OpInst->dump();
-                    return false;
-                  }
-                  std::cerr << "Found induction use" << std::endl;
-
-                } else {
-                  OpInst->addAnnotationMetadata(NonLoopIV);
-                  InstructionsUsedForBC.push_back(OpInst);
-                  ++MaxIdx;
-                }
-              } else {
-                std::cerr << "This is unexpected, found a: ";
-                Operand->dump();
-                assert(false);
-              }
+        // Try to extract Bounds Check
+        auto* LastBranch = dyn_cast<BranchInst>(&LastInst);
+        assert(LastBranch);
+        auto BCInstr = extractBcInstructions(&LastInst, L, InductionVariable);
+        if(!BCInstr.empty()){
+          std::cerr << "Identified BC Instructions successfully" << std::endl;
+          BasicBlock* BCBlock = createBasicBlockWithBCInstructions(VMap, BCInstr, BB, InductionVariable, Max);
+          // Branch from pre loop block to bc block, remap phi nodes of first loop block
+          bool Moved = moveBCToBeforeLoop(BCBlock, LastPreLoopBlock, FirstLoopBlock);
+          if(Moved){
+            LastPreLoopBlock = BCBlock;
+            assert(LastBranch->isConditional());
+            // Branch from BC Block to First LoopBlock
+            auto* TrueBranch = LastBranch->getSuccessor(0);
+            auto* FalseBranch = LastBranch->getSuccessor(1);
+            size_t NextNodeIdx = 1;
+            if(LoopBlocks.find(TrueBranch) != LoopBlocks.end()){
+              NextNodeIdx = 0;
+            }else{
+              assert(LoopBlocks.find(FalseBranch) != LoopBlocks.end());
             }
+            auto* BCCompare = &BCBlock->getInstList().back();
+            auto* NewBr = BranchInst::Create(TrueBranch, FalseBranch, BCCompare, BCBlock);
+            // Add BC annotation
+            NewBr->addAnnotationMetadata(WasmerBoundsCheck);
+
+            NewBr->setSuccessor(NextNodeIdx, FirstLoopBlock);
+            // Remove BC by deleting old branch and branching unconditionally
+            BranchInst::Create(LastBranch->getSuccessor(NextNodeIdx), BB);
+            LastInst.removeFromParent();
+            LastInst.deleteValue();
+            std::cerr << "SUCCESSFUL EXTRACTION IN: " << BB->getParent()->getName().data() << std::endl;
           }
         }
       }
     }
-    if(!FoundMemAcc){
-      return false;
-    }
-
-    auto UnrollRes = unrollOneLoopIteration(L, VMap);
-    if(!UnrollRes.HeaderEnd || !UnrollRes.HeaderStart){
-      return false;
-    }
-
-    std::cerr << std::endl << std::endl << std::endl << std::endl;
-    // Manipulate Loop
-    for (auto *BB = UnrollRes.HeaderStart; BB != UnrollRes.HeaderEnd;
-         BB = BB->getNextNode()) {
-      for (auto &Inst : BB->getInstList()) {
-        if (isAnnotated(&Inst, MemoryAccessIndex)) {
-          std::vector<Instruction *> BCInstructions;
-          BCInstructions.push_back(&Inst);
-
-          // Collect all non loop invariant instructions to calculate bounds
-          // check
-          size_t MaxIdx = 1;
-          for (size_t CopyStartIdx = 0; CopyStartIdx != MaxIdx;
-               ++CopyStartIdx) {
-            auto *Next = BCInstructions.at(CopyStartIdx);
-            for (size_t OpIdx = 0; OpIdx < Next->getNumOperands(); ++OpIdx) {
-              auto *Operand = Next->getOperand(OpIdx);
-              if (auto *OpInst = dyn_cast<Instruction>(Operand)) {
-                if (OpInst == InductionVariable) {
-
-                } else if (isAnnotated(OpInst, NonLoopIV)) {
-                  BCInstructions.push_back(OpInst);
-                  ++MaxIdx;
-                }
-              }
-            }
-          }
-
-          std::cerr << "Iterate over BC inst" << std::endl;
-          for (auto RevIt = BCInstructions.rbegin();
-               RevIt != BCInstructions.rend(); ++RevIt) {
-            auto *Instr = *RevIt;
-            auto *ClonedInst = Instr->clone();
-            ClonedInst->insertAfter(Instr);
-            VMap[Instr] = ClonedInst;
-            for (size_t OpIdx = 0; OpIdx < ClonedInst->getNumOperands();
-                 ++OpIdx) {
-              auto *Operand = ClonedInst->getOperand(OpIdx);
-              if (isa<Instruction>(Operand)) {
-                if (isAnnotated(dyn_cast<Instruction>(Operand),
-                                InductionVariableAnno)) {
-                  ClonedInst->setOperand(OpIdx, Max);
-                } else {
-                  auto VRes = VMap[Operand];
-                  if (VRes.pointsToAliveValue()) {
-                    if (auto *ClonedOperand = dyn_cast<Instruction>(&*VRes)) {
-                      ClonedInst->setOperand(OpIdx, ClonedOperand);
-                    }
-                  }
-                }
-              }
-            }
-          }
-
-          // Replace usage of index in BC
-          assert(isAnnotated(BCInstructions.front(), MemoryAccessIndex));
-          auto *MemAccIdx = BCInstructions.front();
-          auto *ClonedMemAccIdx = dyn_cast<Instruction>(&(*VMap[MemAccIdx]));
-          for (auto *User : BCInstructions.front()->users()) {
-            if (!isa<GEPOperator>(User)) {
-              if (auto *Instr = dyn_cast<Instruction>(User)) {
-                for (size_t OpIdx = 0; OpIdx < Instr->getNumOperands();
-                     ++OpIdx) {
-                  if (dyn_cast<Instruction>(Instr->getOperand(OpIdx)) ==
-                      MemAccIdx) {
-                    Instr->setOperand(OpIdx, ClonedMemAccIdx);
-                  }
-                }
-              }
-            }
-          }
-
-          dyn_cast<BasicBlock>(&*VMap[BB])->getInstList().back().addAnnotationMetadata(RemoveBC);
-          break;
-        }
-      }
-    }
-
-
-
-    // Assume index is in bounds
-    for(auto* BB : L->getBlocks()){
-      if(isAnnotated(&BB->getInstList().back(), RemoveBC)){
-        if(auto* Branch = dyn_cast<BranchInst>(&BB->getInstList().back())){
-          assert(Branch->getNumSuccessors() == 2);
-          if(VMap[Branch->getSuccessor(0)].pointsToAliveValue()){
-            Branch->setCondition(ConstantInt::getTrue(Branch->getCondition()->getContext()));
-            continue;
-          }
-          if(VMap[Branch->getSuccessor(1)].pointsToAliveValue()){
-            Branch->setCondition(ConstantInt::getFalse(Branch->getCondition()->getContext()));
-            continue;
-          }
-        }
-      }
-    }
-    std::cerr << "SUCCESSFUL EXTRACTION" << std::endl;
     return true;
   }
 
