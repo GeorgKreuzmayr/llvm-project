@@ -26,10 +26,7 @@ public:
 
   bool runOnLoop(Loop *L, LPPassManager &LPM) override {
 
-    // Only optimize most outer loop
-    if (L->getLoopDepth() != 1) {
-      return false;
-    }
+
     ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
     auto lb = L->getBounds(SE);
     auto InductionVariable = L->getInductionVariable(SE);
@@ -45,6 +42,7 @@ public:
         if (lb.getValue().getDirection() ==
             Loop::LoopBounds::Direction::Increasing) {
           Max = &lb.getValue().getFinalIVValue();
+          lb.getValue().getFinalIVValue().dump();
           std::cerr << "Min: ";
           lb.getValue().getInitialIVValue().dump();
         } else {
@@ -62,6 +60,11 @@ public:
 
     if(!Max){
       return false;
+    }
+
+    // Only optimize most outer loop
+    if (L->getLoopDepth() != 1) {
+      //return false;
     }
 
     std::unordered_set<Instruction *> NonLoopInvariantLocalVariables;
@@ -97,8 +100,10 @@ public:
                         GEPMemoryAccess);
                   }
                 }
-                if(isa<PHINode>(OpInst)){
+                if(auto* Phi = dyn_cast<PHINode>(OpInst)){
+                  BB->dump();
                   if(OpInst != InductionVariable){
+                    OpInst->dump();
                     return false;
                   }
                   std::cerr << "Found induction use" << std::endl;
@@ -211,10 +216,19 @@ public:
     for(auto* BB : L->getBlocks()){
       if(isAnnotated(&BB->getInstList().back(), RemoveBC)){
         if(auto* Branch = dyn_cast<BranchInst>(&BB->getInstList().back())){
-          Branch->setCondition(ConstantInt::getFalse(Branch->getCondition()->getContext()));
+          assert(Branch->getNumSuccessors() == 2);
+          if(VMap[Branch->getSuccessor(0)].pointsToAliveValue()){
+            Branch->setCondition(ConstantInt::getTrue(Branch->getCondition()->getContext()));
+            continue;
+          }
+          if(VMap[Branch->getSuccessor(1)].pointsToAliveValue()){
+            Branch->setCondition(ConstantInt::getFalse(Branch->getCondition()->getContext()));
+            continue;
+          }
         }
       }
     }
+    std::cerr << "SUCCESSFUL EXTRACTION" << std::endl;
     return true;
   }
 

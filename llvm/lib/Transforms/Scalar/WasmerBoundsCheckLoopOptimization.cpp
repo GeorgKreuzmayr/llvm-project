@@ -121,7 +121,6 @@ public:
                     return false;
                   }
                   std::cerr << "Found induction use" << std::endl;
-
                 } else {
                   OpInst->addAnnotationMetadata(NonLoopIV);
                   InstructionsUsedForBC.push_back(OpInst);
@@ -229,7 +228,15 @@ public:
     for(auto* BB : L->getBlocks()){
       if(isAnnotated(&BB->getInstList().back(), RemoveBC)){
         if(auto* Branch = dyn_cast<BranchInst>(&BB->getInstList().back())){
-          Branch->setCondition(ConstantInt::getFalse(Branch->getCondition()->getContext()));
+          assert(Branch->getNumSuccessors() == 2);
+          if(VMap[Branch->getSuccessor(0)].pointsToAliveValue()){
+            Branch->setCondition(ConstantInt::getTrue(Branch->getCondition()->getContext()));
+            continue;
+          }
+          if(VMap[Branch->getSuccessor(1)].pointsToAliveValue()){
+            Branch->setCondition(ConstantInt::getFalse(Branch->getCondition()->getContext()));
+            continue;
+          }
         }
       }
     }
