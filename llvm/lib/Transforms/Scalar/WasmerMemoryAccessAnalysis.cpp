@@ -322,9 +322,9 @@ public:
           splitAndInsert(EntryBlock, SameCompTo, MaxBCBlock, TrapBlock);
         }
       } else if (ExtractInstr->getParent() == EntryBlock) {
-        splitAndInsert(EntryBlock, ExtractInstr, MaxBCBlock, TrapBlock);
+        splitAndInsert(SameCompTo->getParent(), SameCompTo, MaxBCBlock, TrapBlock);
       } else if (SameCompTo->getParent() == EntryBlock) {
-        splitAndInsert(EntryBlock, SameCompTo, MaxBCBlock, TrapBlock);
+        splitAndInsert(ExtractInstr->getParent(), ExtractInstr, MaxBCBlock, TrapBlock);
       } else if(ExtractInstr->getParent() == SameCompTo->getParent()){
         if (SameCompTo->comesBefore(ExtractInstr)) {
           splitAndInsert(ExtractInstr->getParent(), ExtractInstr, MaxBCBlock, TrapBlock);
@@ -338,6 +338,7 @@ public:
                   << std::endl;
         continue;
       }
+      std::cerr << "Successful Extraction" << std::endl;
 
       // Remove all bounds checks
       for (auto *BCComp : ExtractBCCompPair->second) {

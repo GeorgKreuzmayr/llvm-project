@@ -132,6 +132,7 @@ public:
   }
 
   bool runOnLoop(Loop *L, LPPassManager &LPM) override {
+    return false;
     ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
     auto LB = L->getBounds(SE);
     auto* InductionVariable = L->getInductionVariable(SE);
