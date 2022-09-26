@@ -6,9 +6,11 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/WasmerPass.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 #include <iostream>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace llvm {
 struct WasmerFunctionPass : public FunctionPass {
@@ -135,12 +137,31 @@ struct WasmerFunctionPass : public FunctionPass {
 
           }else{
             assert(false);
-            return {};
           }
         }
       }
     }
     return {};
+  }
+
+  BasicBlock* createBCBlock(std::vector<Instruction*> Instrs, ICmpInst* Cmp, ValueToValueMapTy& VMap){
+    BasicBlock* BCBlock = BasicBlock::Create(Cmp->getContext(), "", Cmp->getParent()->getParent());
+
+    Instrs.pop_back(); // Get rid of base value
+    Instrs.emplace(Instrs.begin(), Cmp); // Add cmp to Instr
+    for(auto It = Instrs.rbegin(); It != Instrs.rend(); ++It){
+      auto* Inst = *It;
+      auto* ClonedInst = Inst->clone();
+      VMap[Inst] = ClonedInst;
+      for(size_t OpIdx = 0; OpIdx < ClonedInst->getNumOperands(); ++OpIdx){
+        auto ClonedOp = VMap[ClonedInst->getOperand(OpIdx)];
+        if(ClonedOp.pointsToAliveValue()){
+          ClonedInst->setOperand(OpIdx, dyn_cast<Value>(&*ClonedOp));
+        }
+      }
+      BCBlock->getInstList().push_back(ClonedInst);
+    }
+    return BCBlock;
   }
 
   int64_t interpretAddInstructions(std::vector<Instruction*>& Insts){
@@ -197,7 +218,7 @@ struct WasmerFunctionPass : public FunctionPass {
       }
     }
 
-    std::unordered_map<Instruction*, int64_t> MaxAdd;
+    std::unordered_map<Instruction*, std::pair<int64_t, ICmpInst*>> MaxAdd;
     for(auto PotExPair : PotentialExtract){
       auto* ExtractInstr = PotExPair.first;
       if(PotExPair.second.size() < 3){
@@ -209,19 +230,26 @@ struct WasmerFunctionPass : public FunctionPass {
       ExtractInstr->dump();
       bool First = true;
       int64_t Max = 0;
+      ICmpInst* MaxCmp = nullptr;
       for(auto* BCComp : PotExPair.second){
         auto It = BCMap.find(BCComp);
         int64_t Res = interpretAddInstructions(It->second);
         if(First){
           Max = Res;
           First = false;
+          MaxCmp = BCComp;
         }else{
-          Max = std::max(Max, Res);
+          if(Res > Max){
+            Max = Res;
+            MaxCmp = BCComp;
+          }
         }
       }
-      MaxAdd.emplace(ExtractInstr, Max);
+      MaxAdd.emplace(ExtractInstr, std::pair<int64_t, ICmpInst*>{Max, MaxCmp});
       std::cerr << "Max: " << Max << std::endl;
     }
+
+    ValueToValueMapTy VMap;
 
     for(auto MaxPair : MaxAdd){
       auto* ExtractInstr = MaxPair.first;
@@ -247,25 +275,19 @@ struct WasmerFunctionPass : public FunctionPass {
         }
       }
 
+      auto* MaxBCBlock = createBCBlock(BCMap.find(MaxPair.second.second)->second, MaxPair.second.second, VMap);
+
       // Insert one Bounds Check with max value to entry block
       if(ExtractInstr->getParent() == EntryBlock && SameCompTo->getParent() == EntryBlock){
         if(SameCompTo->comesBefore(ExtractInstr)){
 
         }else{
-          /*
-SameCompTo->dump();
-auto* Splitted = EntryBlock->splitBasicBlock(SameCompTo->getNextNode());
-auto* Branch = &EntryBlock->getInstList().back();
-Branch->removeFromParent();
-Branch->deleteValue();
-for(auto* Inst : NewBCInstr){
-  Inst->insertAfter(&EntryBlock->getInstList().back());
-}
-BranchInst::Create(Splitted, TrapBlock, dyn_cast<Value>(&EntryBlock->getInstList().back()), EntryBlock);
-Splitted->dump();
-
-          EntryBlock->dump();
-          */
+        auto* Splitted = EntryBlock->splitBasicBlock(SameCompTo->getNextNode());
+        auto* Branch = &EntryBlock->getInstList().back();
+        Branch->removeFromParent();
+        Branch->deleteValue();
+        BranchInst::Create(MaxBCBlock, EntryBlock);
+        BranchInst::Create(Splitted, TrapBlock, dyn_cast<Value>(&MaxBCBlock->getInstList().back()), MaxBCBlock);
         }
       }else if(ExtractInstr->getParent() == EntryBlock){
 
@@ -291,6 +313,10 @@ Splitted->dump();
         BCBranch->removeFromParent();
         BCBranch->deleteValue();
       }
+    }
+
+    for(auto& BB : F.getBasicBlockList()){
+      BB.dump();
     }
 
     return false;
