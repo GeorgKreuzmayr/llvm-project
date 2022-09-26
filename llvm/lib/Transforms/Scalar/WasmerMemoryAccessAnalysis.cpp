@@ -135,9 +135,9 @@ public:
       auto *LeftVal = dyn_cast<Instruction>(BCCompare->getOperand(0));
       auto *RightVal = dyn_cast<Instruction>(BCCompare->getOperand(1));
       // Start with computation inside the current basic block that is used for BC
-      if (isa<AddOperator>(LeftVal)) {
+      if (isa_and_nonnull<AddOperator>(LeftVal)) {
         InstructionsUsedForBC.push_back(LeftVal);
-      } else if (isa<AddOperator>(RightVal)) {
+      } else if (isa_and_nonnull<AddOperator>(RightVal)) {
         InstructionsUsedForBC.push_back(RightVal);
       } else {
         return {};
@@ -169,7 +169,10 @@ public:
             }
           } else if (isa<Constant>(Operand)) {
 
-          } else {
+          } else if (isa<Argument>(Operand) ) {
+
+          }else {
+            Operand->dump();
             assert(false);
           }
         }
@@ -319,11 +322,9 @@ public:
           splitAndInsert(EntryBlock, SameCompTo, MaxBCBlock, TrapBlock);
         }
       } else if (ExtractInstr->getParent() == EntryBlock) {
-        std::cerr << "ExtractInstr in Entry Block" << std::endl;
-          assert(false);
+        splitAndInsert(EntryBlock, ExtractInstr, MaxBCBlock, TrapBlock);
       } else if (SameCompTo->getParent() == EntryBlock) {
-        std::cerr << "Same Comp To in Entry Block" << std::endl;
-        assert(false);
+        splitAndInsert(EntryBlock, SameCompTo, MaxBCBlock, TrapBlock);
       } else if(ExtractInstr->getParent() == SameCompTo->getParent()){
         if (SameCompTo->comesBefore(ExtractInstr)) {
           splitAndInsert(ExtractInstr->getParent(), ExtractInstr, MaxBCBlock, TrapBlock);
@@ -331,9 +332,11 @@ public:
           splitAndInsert(SameCompTo->getParent(), SameCompTo, MaxBCBlock, TrapBlock);
         }
       } else {
+        MaxBCBlock->removeFromParent();
+        MaxBCBlock->dropAllReferences();
         std::cerr << "Require either replace or Same Comp to be in entry block"
                   << std::endl;
-        assert(false);
+        continue;
       }
 
       // Remove all bounds checks
