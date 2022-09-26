@@ -140,7 +140,7 @@ public:
       } else if (isa<AddOperator>(RightVal)) {
         InstructionsUsedForBC.push_back(RightVal);
       } else {
-        assert(false);
+        return {};
       }
 
       // Collect all non loop invariant instructions to calculate bounds
@@ -271,6 +271,7 @@ public:
       }
       MaxAdd.emplace(ExtractInstr, std::pair<int64_t, ICmpInst *>{Max, MaxCmp});
       std::cerr << "Max: " << Max << std::endl;
+      std::cerr << "Extracting " << PotExPair.second.size() << " bcs" << std::endl;
     }
 
     ValueToValueMapTy VMap;
@@ -280,6 +281,7 @@ public:
       auto ExtractBCCompPair = PotentialExtract.find(ExtractInstr);
       Instruction *SameCompTo = nullptr;
       BasicBlock *TrapBlock = nullptr;
+      bool failed = false;
       for (auto *BCComp : ExtractBCCompPair->second) {
         auto BCCalcPair = BCMap.find(BCComp);
         auto *CompToInst = BCComp->getOperand(0) == BCCalcPair->second.front()
@@ -296,9 +298,12 @@ public:
           if (SameCompTo != CompToInst) {
             std::cerr << "Expect everyone to compare to same instruction"
                       << std::endl;
-            assert(false);
+            failed = true;
           }
         }
+      }
+      if(failed){
+        continue;
       }
 
       auto *MaxBCBlock =
@@ -309,22 +314,22 @@ public:
       if (ExtractInstr->getParent() == EntryBlock &&
           SameCompTo->getParent() == EntryBlock) {
         if (SameCompTo->comesBefore(ExtractInstr)) {
-
+          splitAndInsert(EntryBlock, ExtractInstr, MaxBCBlock, TrapBlock);
         } else {
-          auto *Splitted =
-              EntryBlock->splitBasicBlock(SameCompTo->getNextNode());
-          auto *Branch = &EntryBlock->getInstList().back();
-          Branch->removeFromParent();
-          Branch->deleteValue();
-          BranchInst::Create(MaxBCBlock, EntryBlock);
-          BranchInst::Create(Splitted, TrapBlock,
-                             dyn_cast<Value>(&MaxBCBlock->getInstList().back()),
-                             MaxBCBlock);
+          splitAndInsert(EntryBlock, SameCompTo, MaxBCBlock, TrapBlock);
         }
       } else if (ExtractInstr->getParent() == EntryBlock) {
-
+        std::cerr << "ExtractInstr in Entry Block" << std::endl;
+          assert(false);
       } else if (SameCompTo->getParent() == EntryBlock) {
-
+        std::cerr << "Same Comp To in Entry Block" << std::endl;
+        assert(false);
+      } else if(ExtractInstr->getParent() == SameCompTo->getParent()){
+        if (SameCompTo->comesBefore(ExtractInstr)) {
+          splitAndInsert(EntryBlock, ExtractInstr, MaxBCBlock, TrapBlock);
+        } else {
+          splitAndInsert(EntryBlock, SameCompTo, MaxBCBlock, TrapBlock);
+        }
       } else {
         std::cerr << "Require either replace or Same Comp to be in entry block"
                   << std::endl;
@@ -348,11 +353,21 @@ public:
       }
     }
 
-    for (auto &BB : F.getBasicBlockList()) {
-      BB.dump();
-    }
+    std::cerr << "Successful Extraction" << std::endl;
 
     return true;
+  }
+
+  void splitAndInsert(BasicBlock* BlockToSplit, Instruction* SplitPosition, BasicBlock* MaxBCBlock, BasicBlock* TrapBlock){
+    auto *Splitted =
+        BlockToSplit->splitBasicBlock(SplitPosition->getNextNode());
+    auto *Branch = &BlockToSplit->getInstList().back();
+    Branch->removeFromParent();
+    Branch->deleteValue();
+    BranchInst::Create(MaxBCBlock, BlockToSplit);
+    BranchInst::Create(Splitted, TrapBlock,
+                       dyn_cast<Value>(&MaxBCBlock->getInstList().back()),
+                       MaxBCBlock);
   }
 };
 } // namespace
