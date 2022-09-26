@@ -17,41 +17,44 @@ struct WasmerFunctionPass : public FunctionPass {
   static char ID;
   WasmerFunctionPass() : FunctionPass(ID) {}
 
-  std::vector<Instruction*> extractBcInstructions(Instruction* MemoryAccessBranch,
-                                                   BasicBlock* BB, std::unordered_map<BasicBlock*, Value*>& BCMap, BasicBlock* EntryBlock){
-    if(BB == EntryBlock){
+  std::vector<Instruction *>
+  extractBcInstructions(Instruction *MemoryAccessBranch, BasicBlock *BB,
+                        std::unordered_map<BasicBlock *, Value *> &BCMap,
+                        BasicBlock *EntryBlock) {
+    if (BB == EntryBlock) {
       return {};
     }
-    Instruction* MaxMem;
-    if (auto *BCCompare = dyn_cast<ICmpInst>(MemoryAccessBranch->getPrevNode())) {
+    Instruction *MaxMem;
+    if (auto *BCCompare =
+            dyn_cast<ICmpInst>(MemoryAccessBranch->getPrevNode())) {
       assert(BCCompare->getNumOperands() == 2);
-      auto* LeftVal = dyn_cast<Instruction>(BCCompare->getOperand(0));
-      auto* RightVal = dyn_cast<Instruction>(BCCompare->getOperand(1));
+      auto *LeftVal = dyn_cast<Instruction>(BCCompare->getOperand(0));
+      auto *RightVal = dyn_cast<Instruction>(BCCompare->getOperand(1));
       std::vector<Instruction *> InstructionsUsedForBC;
 
       // Start with computation inside the current basic block that is used for BC
-      if(LeftVal->getParent() == BB && RightVal->getParent() == EntryBlock){
+      if (LeftVal->getParent() == BB && RightVal->getParent() == EntryBlock) {
         InstructionsUsedForBC.push_back(LeftVal);
         MaxMem = RightVal;
-      }else if(LeftVal->getParent() == EntryBlock && RightVal->getParent() == BB){
+      } else if (LeftVal->getParent() == EntryBlock &&
+                 RightVal->getParent() == BB) {
         InstructionsUsedForBC.push_back(RightVal);
         MaxMem = LeftVal;
-      }else{
+      } else {
         return {};
       }
 
       // Collect all non loop invariant instructions to calculate bounds
       // check
       size_t MaxIdx = 1;
-      for (size_t CopyStartIdx = 0; CopyStartIdx != MaxIdx;
-           ++CopyStartIdx) {
+      for (size_t CopyStartIdx = 0; CopyStartIdx != MaxIdx; ++CopyStartIdx) {
         auto *Next = InstructionsUsedForBC.at(CopyStartIdx);
         for (size_t OpIdx = 0; OpIdx < Next->getNumOperands(); ++OpIdx) {
           auto *Operand = Next->getOperand(OpIdx);
           if (auto *OpInst = dyn_cast<Instruction>(Operand)) {
             if (OpInst->getParent() != BB) {
               // Skip Instructions from different BB
-              if(OpInst->getParent() != EntryBlock){
+              if (OpInst->getParent() != EntryBlock) {
                 std::cerr << "PARENT IS NOT ENTRY BLOCK" << std::endl;
                 return {};
               }
@@ -69,16 +72,16 @@ struct WasmerFunctionPass : public FunctionPass {
               InstructionsUsedForBC.push_back(OpInst);
               ++MaxIdx;
             }
-          }else if (isa<Argument>(Operand)){
+          } else if (isa<Argument>(Operand)) {
             std::cerr << "Argument: ";
             Operand->dump();
             assert(false);
-          } else if (isa<Constant>(Operand)){
-            auto* Const = dyn_cast<Constant>(Operand);
+          } else if (isa<Constant>(Operand)) {
+            auto *Const = dyn_cast<Constant>(Operand);
             Const->getUniqueInteger().dump();
             std::cerr << "Constant: ";
             Operand->dump();
-          }else {
+          } else {
             std::cerr << "This is unexpected, found a: ";
             Operand->dump();
             std::cerr << "Type: ";
@@ -87,13 +90,13 @@ struct WasmerFunctionPass : public FunctionPass {
           }
         }
       }
-      auto* LastInstr = InstructionsUsedForBC.back();
+      auto *LastInstr = InstructionsUsedForBC.back();
       return InstructionsUsedForBC;
     }
     return {};
   }
 
-  std::vector<Instruction*> findPotentialExtractBCs(Instruction* BCBranch){
+  std::vector<Instruction *> findPotentialExtractBCs(Instruction *BCBranch) {
     std::vector<Instruction *> InstructionsUsedForBC;
     if (auto *BCCompare = dyn_cast<ICmpInst>(BCBranch->getPrevNode())) {
       assert(BCCompare->getNumOperands() == 2);
@@ -105,14 +108,13 @@ struct WasmerFunctionPass : public FunctionPass {
       } else if (isa<AddOperator>(RightVal)) {
         InstructionsUsedForBC.push_back(RightVal);
       } else {
-        assert(false);
+        return {};
       }
 
       // Collect all non loop invariant instructions to calculate bounds
       // check
       size_t MaxIdx = 1;
-      for (size_t CopyStartIdx = 0; CopyStartIdx != MaxIdx;
-           ++CopyStartIdx) {
+      for (size_t CopyStartIdx = 0; CopyStartIdx != MaxIdx; ++CopyStartIdx) {
         auto *Next = InstructionsUsedForBC.at(CopyStartIdx);
         int NonGEPUsers = 0;
         for (auto *OpUser : Next->users()) {
@@ -126,16 +128,16 @@ struct WasmerFunctionPass : public FunctionPass {
         for (size_t OpIdx = 0; OpIdx < Next->getNumOperands(); ++OpIdx) {
           auto *Operand = Next->getOperand(OpIdx);
           if (auto *OpInst = dyn_cast<Instruction>(Operand)) {
-            if(isa<AddOperator>(OpInst) || isa<ZExtInst>(OpInst)){
+            if (isa<AddOperator>(OpInst) || isa<ZExtInst>(OpInst)) {
               InstructionsUsedForBC.push_back(OpInst);
               ++MaxIdx;
-            }else{
+            } else {
               std::cerr << "found non add and zext instr" << std::endl;
               return {};
             }
-          }else if(isa<Constant>(Operand)){
+          } else if (isa<Constant>(Operand)) {
 
-          }else{
+          } else {
             assert(false);
           }
         }
@@ -144,18 +146,20 @@ struct WasmerFunctionPass : public FunctionPass {
     return {};
   }
 
-  BasicBlock* createBCBlock(std::vector<Instruction*> Instrs, ICmpInst* Cmp, ValueToValueMapTy& VMap){
-    BasicBlock* BCBlock = BasicBlock::Create(Cmp->getContext(), "", Cmp->getParent()->getParent());
+  BasicBlock *createBCBlock(std::vector<Instruction *> Instrs, ICmpInst *Cmp,
+                            ValueToValueMapTy &VMap) {
+    BasicBlock *BCBlock = BasicBlock::Create(Cmp->getContext(), "",
+                                             Cmp->getParent()->getParent());
 
-    Instrs.pop_back(); // Get rid of base value
+    Instrs.pop_back();                   // Get rid of base value
     Instrs.emplace(Instrs.begin(), Cmp); // Add cmp to Instr
-    for(auto It = Instrs.rbegin(); It != Instrs.rend(); ++It){
-      auto* Inst = *It;
-      auto* ClonedInst = Inst->clone();
+    for (auto It = Instrs.rbegin(); It != Instrs.rend(); ++It) {
+      auto *Inst = *It;
+      auto *ClonedInst = Inst->clone();
       VMap[Inst] = ClonedInst;
-      for(size_t OpIdx = 0; OpIdx < ClonedInst->getNumOperands(); ++OpIdx){
+      for (size_t OpIdx = 0; OpIdx < ClonedInst->getNumOperands(); ++OpIdx) {
         auto ClonedOp = VMap[ClonedInst->getOperand(OpIdx)];
-        if(ClonedOp.pointsToAliveValue()){
+        if (ClonedOp.pointsToAliveValue()) {
           ClonedInst->setOperand(OpIdx, dyn_cast<Value>(&*ClonedOp));
         }
       }
@@ -164,52 +168,40 @@ struct WasmerFunctionPass : public FunctionPass {
     return BCBlock;
   }
 
-  int64_t interpretAddInstructions(std::vector<Instruction*>& Insts){
+  int64_t interpretAddInstructions(std::vector<Instruction *> &Insts) {
     int64_t Sum = 0;
-    for(int64_t Idx = Insts.size() - 2; Idx >= 0; --Idx){
-      auto* Next = Insts[Idx];
-      if(auto* Add = dyn_cast<AddOperator>(Next)){
+    for (int64_t Idx = Insts.size() - 2; Idx >= 0; --Idx) {
+      auto *Next = Insts[Idx];
+      if (auto *Add = dyn_cast<AddOperator>(Next)) {
         assert(Add->getOperand(0) == Insts[Idx + 1]);
-        auto* Const = dyn_cast<ConstantInt>(Add->getOperand(1));
+        auto *Const = dyn_cast<ConstantInt>(Add->getOperand(1));
         Sum += Const->getSExtValue();
       }
     }
     return Sum;
   }
 
-
   bool runOnFunction(Function &F) override {
 
-    for(auto& BB : F.getBasicBlockList()){
-      for(auto& Inst : BB.getInstList()){
-        if(auto* Call = dyn_cast<CallInst>(&Inst)){
-          auto* Fn = dyn_cast<Function>(Call->getOperand(0));
-          //if(!Fn->doesNotFreeMemory()){
-            //return false;
-          //}
-        }
-      }
-    }
-
-    auto* EntryBlock = &F.getEntryBlock();
-    std::unordered_map<Instruction*, std::vector<ICmpInst*>> PotentialExtract;
-    std::unordered_map<ICmpInst*, std::vector<Instruction*>> BCMap;
+    auto *EntryBlock = &F.getEntryBlock();
+    std::unordered_map<Instruction *, std::vector<ICmpInst *>> PotentialExtract;
+    std::unordered_map<ICmpInst *, std::vector<Instruction *>> BCMap;
     std::cerr << F.getName().data() << std::endl;
     auto &Ctx = F.getContext();
 
-    for(auto& BB : F.getBasicBlockList()){
-      for(auto& Inst : BB.getInstList()){
-        if(isAnnotated(&Inst, WasmerBoundsCheck)){
-          auto* BCCmp = dyn_cast<ICmpInst>(Inst.getPrevNode());
+    for (auto &BB : F.getBasicBlockList()) {
+      for (auto &Inst : BB.getInstList()) {
+        if (isAnnotated(&Inst, WasmerBoundsCheck)) {
+          auto *BCCmp = dyn_cast<ICmpInst>(Inst.getPrevNode());
           auto BCInstr = findPotentialExtractBCs(&Inst);
-          if(!BCInstr.empty()){
+          if (!BCInstr.empty()) {
             BCMap.emplace(BCCmp, BCInstr);
-            auto* ExtractInstr = BCInstr.back();
+            auto *ExtractInstr = BCInstr.back();
             auto It = PotentialExtract.find(ExtractInstr);
-            if(It != PotentialExtract.end()){
+            if (It != PotentialExtract.end()) {
               It->second.push_back(BCCmp);
-            }else{
-              std::vector<ICmpInst*> Vec;
+            } else {
+              std::vector<ICmpInst *> Vec;
               Vec.push_back(BCCmp);
               PotentialExtract.emplace(ExtractInstr, std::move(Vec));
             }
@@ -218,10 +210,10 @@ struct WasmerFunctionPass : public FunctionPass {
       }
     }
 
-    std::unordered_map<Instruction*, std::pair<int64_t, ICmpInst*>> MaxAdd;
-    for(auto PotExPair : PotentialExtract){
-      auto* ExtractInstr = PotExPair.first;
-      if(PotExPair.second.size() < 3){
+    std::unordered_map<Instruction *, std::pair<int64_t, ICmpInst *>> MaxAdd;
+    for (auto PotExPair : PotentialExtract) {
+      auto *ExtractInstr = PotExPair.first;
+      if (PotExPair.second.size() < 3) {
         std::cerr << "Found less than 3 BCs for ";
         ExtractInstr->dump();
         continue;
@@ -230,84 +222,98 @@ struct WasmerFunctionPass : public FunctionPass {
       ExtractInstr->dump();
       bool First = true;
       int64_t Max = 0;
-      ICmpInst* MaxCmp = nullptr;
-      for(auto* BCComp : PotExPair.second){
+      ICmpInst *MaxCmp = nullptr;
+      for (auto *BCComp : PotExPair.second) {
         auto It = BCMap.find(BCComp);
         int64_t Res = interpretAddInstructions(It->second);
-        if(First){
+        if (First) {
           Max = Res;
           First = false;
           MaxCmp = BCComp;
-        }else{
-          if(Res > Max){
+        } else {
+          if (Res > Max) {
             Max = Res;
             MaxCmp = BCComp;
           }
         }
       }
-      MaxAdd.emplace(ExtractInstr, std::pair<int64_t, ICmpInst*>{Max, MaxCmp});
+      MaxAdd.emplace(ExtractInstr, std::pair<int64_t, ICmpInst *>{Max, MaxCmp});
       std::cerr << "Max: " << Max << std::endl;
+      std::cerr << "Extracting " << PotExPair.second.size() << " bcs" << std::endl;
     }
 
     ValueToValueMapTy VMap;
 
-    for(auto MaxPair : MaxAdd){
-      auto* ExtractInstr = MaxPair.first;
+    for (auto MaxPair : MaxAdd) {
+      auto *ExtractInstr = MaxPair.first;
       auto ExtractBCCompPair = PotentialExtract.find(ExtractInstr);
-      Instruction* SameCompTo = nullptr;
-      BasicBlock* TrapBlock = nullptr;
-      for(auto* BCComp : ExtractBCCompPair->second){
+      Instruction *SameCompTo = nullptr;
+      BasicBlock *TrapBlock = nullptr;
+      bool failed = false;
+      for (auto *BCComp : ExtractBCCompPair->second) {
         auto BCCalcPair = BCMap.find(BCComp);
-        auto* CompToInst = BCComp->getOperand(0) == BCCalcPair->second.front()?
-                                                                               dyn_cast<Instruction>(BCComp->getOperand(1)):
-                                                                                   dyn_cast<Instruction>(BCComp->getOperand(0));
-        if(SameCompTo == nullptr){
+        auto *CompToInst = BCComp->getOperand(0) == BCCalcPair->second.front()
+                               ? dyn_cast<Instruction>(BCComp->getOperand(1))
+                               : dyn_cast<Instruction>(BCComp->getOperand(0));
+        if (SameCompTo == nullptr) {
           SameCompTo = CompToInst;
-          auto* BCBranch = dyn_cast<BranchInst>(BCComp->getNextNode());
-          TrapBlock = BCBranch->getSuccessor(0)->getName().startswith("not_in_bounds_block")?
-                                                                                             BCBranch->getSuccessor(0):
-                                                                                             BCBranch->getSuccessor(1);
-        }else{
-          if(SameCompTo != CompToInst){
-            std::cerr << "Expect everyone to compare to same instruction" << std::endl;
-            assert(false);
+          auto *BCBranch = dyn_cast<BranchInst>(BCComp->getNextNode());
+          TrapBlock = BCBranch->getSuccessor(0)->getName().startswith(
+                          "not_in_bounds_block")
+                          ? BCBranch->getSuccessor(0)
+                          : BCBranch->getSuccessor(1);
+        } else {
+          if (SameCompTo != CompToInst) {
+            std::cerr << "Expect everyone to compare to same instruction"
+                      << std::endl;
+            failed = true;
           }
         }
       }
+      if(failed){
+        continue;
+      }
 
-      auto* MaxBCBlock = createBCBlock(BCMap.find(MaxPair.second.second)->second, MaxPair.second.second, VMap);
+      auto *MaxBCBlock =
+          createBCBlock(BCMap.find(MaxPair.second.second)->second,
+                        MaxPair.second.second, VMap);
 
       // Insert one Bounds Check with max value to entry block
-      if(ExtractInstr->getParent() == EntryBlock && SameCompTo->getParent() == EntryBlock){
-        if(SameCompTo->comesBefore(ExtractInstr)){
-
-        }else{
-        auto* Splitted = EntryBlock->splitBasicBlock(SameCompTo->getNextNode());
-        auto* Branch = &EntryBlock->getInstList().back();
-        Branch->removeFromParent();
-        Branch->deleteValue();
-        BranchInst::Create(MaxBCBlock, EntryBlock);
-        BranchInst::Create(Splitted, TrapBlock, dyn_cast<Value>(&MaxBCBlock->getInstList().back()), MaxBCBlock);
+      if (ExtractInstr->getParent() == EntryBlock &&
+          SameCompTo->getParent() == EntryBlock) {
+        if (SameCompTo->comesBefore(ExtractInstr)) {
+          splitAndInsert(EntryBlock, ExtractInstr, MaxBCBlock, TrapBlock);
+        } else {
+          splitAndInsert(EntryBlock, SameCompTo, MaxBCBlock, TrapBlock);
         }
-      }else if(ExtractInstr->getParent() == EntryBlock){
-
-      }else if(SameCompTo->getParent() == EntryBlock){
-
-      }else{
-        std::cerr << "Require either replace or Same Comp to be in entry block" << std::endl;
+      } else if (ExtractInstr->getParent() == EntryBlock) {
+        std::cerr << "ExtractInstr in Entry Block" << std::endl;
+        assert(false);
+      } else if (SameCompTo->getParent() == EntryBlock) {
+        std::cerr << "Same Comp To in Entry Block" << std::endl;
+        assert(false);
+      } else if(ExtractInstr->getParent() == SameCompTo->getParent()){
+        if (SameCompTo->comesBefore(ExtractInstr)) {
+          splitAndInsert(ExtractInstr->getParent(), ExtractInstr, MaxBCBlock, TrapBlock);
+        } else {
+          splitAndInsert(SameCompTo->getParent(), SameCompTo, MaxBCBlock, TrapBlock);
+        }
+      } else {
+        std::cerr << "Require either replace or Same Comp to be in entry block"
+                  << std::endl;
         assert(false);
       }
 
       // Remove all bounds checks
-      for(auto* BCComp : ExtractBCCompPair->second){
-        auto* BCBranch = dyn_cast<BranchInst>(BCComp->getNextNode());
-        BasicBlock* LeftBlock = BCBranch->getSuccessor(0);
-        BasicBlock* RightBlock = BCBranch->getSuccessor(1);
-        if(LeftBlock->getName().startswith("not_in_bounds_block")){
+      for (auto *BCComp : ExtractBCCompPair->second) {
+        auto *BCBranch = dyn_cast<BranchInst>(BCComp->getNextNode());
+        BasicBlock *LeftBlock = BCBranch->getSuccessor(0);
+        BasicBlock *RightBlock = BCBranch->getSuccessor(1);
+        if (LeftBlock->getName().startswith("not_in_bounds_block")) {
           BranchInst::Create(RightBlock, BCBranch);
-        }else if(RightBlock->getName().startswith("not_in_bounds_block")){
+        } else if (RightBlock->getName().startswith("not_in_bounds_block")) {
           BranchInst::Create(LeftBlock, BCBranch);
-        }else{
+        } else {
           assert(false);
         }
         BCBranch->removeFromParent();
@@ -315,14 +321,24 @@ struct WasmerFunctionPass : public FunctionPass {
       }
     }
 
-    for(auto& BB : F.getBasicBlockList()){
-      BB.dump();
-    }
+    std::cerr << "Successful Extraction" << std::endl;
 
-    return false;
+    return true;
+  }
+
+  void splitAndInsert(BasicBlock* BlockToSplit, Instruction* SplitPosition, BasicBlock* MaxBCBlock, BasicBlock* TrapBlock){
+    auto *Splitted =
+        BlockToSplit->splitBasicBlock(SplitPosition->getNextNode());
+    auto *Branch = &BlockToSplit->getInstList().back();
+    Branch->removeFromParent();
+    Branch->deleteValue();
+    BranchInst::Create(MaxBCBlock, BlockToSplit);
+    BranchInst::Create(Splitted, TrapBlock,
+                       dyn_cast<Value>(&MaxBCBlock->getInstList().back()),
+                       MaxBCBlock);
   }
 };
-} // namespace llvm
+} // namespace
 
 char llvm::WasmerFunctionPass::ID = 0;
 static llvm::RegisterPass<llvm::WasmerFunctionPass>

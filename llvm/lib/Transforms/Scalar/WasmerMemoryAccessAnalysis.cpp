@@ -326,9 +326,9 @@ public:
         assert(false);
       } else if(ExtractInstr->getParent() == SameCompTo->getParent()){
         if (SameCompTo->comesBefore(ExtractInstr)) {
-          splitAndInsert(EntryBlock, ExtractInstr, MaxBCBlock, TrapBlock);
+          splitAndInsert(ExtractInstr->getParent(), ExtractInstr, MaxBCBlock, TrapBlock);
         } else {
-          splitAndInsert(EntryBlock, SameCompTo, MaxBCBlock, TrapBlock);
+          splitAndInsert(SameCompTo->getParent(), SameCompTo, MaxBCBlock, TrapBlock);
         }
       } else {
         std::cerr << "Require either replace or Same Comp to be in entry block"
