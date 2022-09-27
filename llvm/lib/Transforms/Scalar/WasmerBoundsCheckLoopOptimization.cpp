@@ -53,7 +53,6 @@ public:
     initializeWasmerBoundsCheckLoopOptimizationPass(
         *PassRegistry::getPassRegistry());
   }
-
   BasicBlock*createBasicBlockWithBCInstructions(ValueToValueMapTy& VMap, std::vector<Instruction*>& BCInstructions, BasicBlock* BB, Instruction* InductionVariable, Value* Max){
     BasicBlock* BCBlock = BasicBlock::Create(BB->getContext(), "", BB->getParent());
     for(auto InstIt = BCInstructions.rbegin(); InstIt != BCInstructions.rend(); ++InstIt){
@@ -159,7 +158,7 @@ public:
   }
 
   bool runOnLoop(Loop *L, LPPassManager &LPM) override {
-    return false;
+    std::cerr << L->getBlocks().front()->getParent()->getName().data() << std::endl;
     ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
     auto LB = L->getBounds(SE);
     auto* InductionVariable = L->getInductionVariable(SE);
@@ -421,7 +420,6 @@ private:
     }
     return {LoopPreHeaderBlock, LastPreLoopBlock};
   }
-
 };
 } // namespace
 
