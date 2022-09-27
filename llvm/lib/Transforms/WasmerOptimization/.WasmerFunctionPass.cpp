@@ -194,7 +194,7 @@ struct WasmerFunctionPass : public FunctionPass {
 
     for (auto &BB : F.getBasicBlockList()) {
       for (auto &Inst : BB.getInstList()) {
-        if (isAnnotated(&Inst, WasmerBoundsCheck)) {
+        if (isAnnotated(&Inst, WasmerBoundsCheck) && Inst.getPrevNode()) {
           auto *BCCmp = dyn_cast<ICmpInst>(Inst.getPrevNode());
           auto BCInstr = findPotentialExtractBCs(&Inst);
           if (!BCInstr.empty()) {
@@ -267,8 +267,6 @@ struct WasmerFunctionPass : public FunctionPass {
                           : BCBranch->getSuccessor(1);
         } else {
           if (SameCompTo != CompToInst) {
-            std::cerr << "Expect everyone to compare to same instruction"
-                      << std::endl;
             failed = true;
           }
         }
