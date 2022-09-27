@@ -217,7 +217,6 @@ public:
   }
 
   bool runOnFunction(Function &F) override {
-
     auto *EntryBlock = &F.getEntryBlock();
     std::unordered_map<Instruction *, std::vector<ICmpInst *>> PotentialExtract;
     std::unordered_map<ICmpInst *, std::vector<Instruction *>> BCMap;
@@ -310,6 +309,11 @@ public:
       auto *MaxBCBlock =
           createBCBlock(BCMap.find(MaxPair.second.second)->second,
                         MaxPair.second.second, VMap);
+      auto* MBranch = dyn_cast<BranchInst>(MaxPair.second.second->getNextNode());
+      if(!MBranch || !MBranch->getSuccessor(0)->getName().startswith("not_in_bounds_block")){
+        std::cerr << "need to revisit branching";
+        assert(false);
+      }
 
       // Insert one Bounds Check with max value to entry block
       if (ExtractInstr->getParent() == EntryBlock &&
@@ -367,7 +371,7 @@ public:
     Branch->removeFromParent();
     Branch->deleteValue();
     BranchInst::Create(MaxBCBlock, BlockToSplit);
-    BranchInst::Create(Splitted, TrapBlock,
+    BranchInst::Create(TrapBlock, Splitted,
                        dyn_cast<Value>(&MaxBCBlock->getInstList().back()),
                        MaxBCBlock);
   }
