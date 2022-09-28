@@ -204,12 +204,6 @@ public:
     AU.addRequired<LoopInfoWrapperPass>();
     getLoopAnalysisUsage(AU);
   }
-
-private:
-  struct LoopBounds {
-    Value *IndexPointer;
-    Value *MaxIndexValue;
-  };
 };
 } // namespace llvm
 
