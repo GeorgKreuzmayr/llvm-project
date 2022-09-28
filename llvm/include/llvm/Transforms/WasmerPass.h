@@ -31,7 +31,7 @@ inline void annotateFunction(Function &F) {
   F.setMetadata(LLVMContext::MD_annotation, MD);
 }
 
-inline bool isAnnotated(Instruction *Inst, std::string_view Annotation) {
+inline bool isAnnotated(Instruction *Inst, const char* Annotation) {
   static_assert(LLVMContext::MD_annotation == 30,
                 "Annotation in wasmer are done on KindID 30");
   auto *MetaData = Inst->getMetadata(LLVMContext::MD_annotation);
@@ -39,7 +39,7 @@ inline bool isAnnotated(Instruction *Inst, std::string_view Annotation) {
     for (size_t Idx = 0; Idx < MetaData->getNumOperands(); ++Idx) {
       if (auto *StringMetaData =
               dyn_cast<MDString>(MetaData->getOperand(Idx).get())) {
-        if (StringMetaData->getString().equals(Annotation.data())) {
+        if (StringMetaData->getString().equals(Annotation)) {
           return true;
         }
       }
