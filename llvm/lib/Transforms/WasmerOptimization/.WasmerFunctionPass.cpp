@@ -335,7 +335,7 @@ struct WasmerFunctionPass : public FunctionPass {
     Branch->removeFromParent();
     Branch->deleteValue();
     BranchInst::Create(MaxBCBlock, BlockToSplit);
-    BranchInst::Create(Splitted, TrapBlock,
+    BranchInst::Create(TrapBlock, Splitted,
                        dyn_cast<Value>(&MaxBCBlock->getInstList().back()),
                        MaxBCBlock);
   }
