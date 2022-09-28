@@ -74,18 +74,13 @@ struct WasmerFunctionPass : public FunctionPass {
             }
           } else if (isa<Argument>(Operand)) {
             std::cerr << "Argument: ";
-            Operand->dump();
             assert(false);
           } else if (isa<Constant>(Operand)) {
             auto *Const = dyn_cast<Constant>(Operand);
-            Const->getUniqueInteger().dump();
             std::cerr << "Constant: ";
-            Operand->dump();
           } else {
             std::cerr << "This is unexpected, found a: ";
-            Operand->dump();
             std::cerr << "Type: ";
-            Operand->getType()->dump();
             assert(false);
           }
         }
@@ -140,7 +135,6 @@ struct WasmerFunctionPass : public FunctionPass {
           } else if (isa<Argument>(Operand) ) {
 
           }else {
-              Operand->dump();
               assert(false);
           }
         }
@@ -218,11 +212,9 @@ struct WasmerFunctionPass : public FunctionPass {
       auto *ExtractInstr = PotExPair.first;
       if (PotExPair.second.size() < 3) {
         std::cerr << "Found less than 3 BCs for ";
-        ExtractInstr->dump();
         continue;
       }
       std::cerr << "Potential Extraction value: ";
-      ExtractInstr->dump();
       bool First = true;
       int64_t Max = 0;
       ICmpInst *MaxCmp = nullptr;

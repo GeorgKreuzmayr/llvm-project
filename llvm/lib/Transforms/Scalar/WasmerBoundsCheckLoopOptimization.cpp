@@ -110,7 +110,6 @@ public:
             }
           } else {
             std::cerr << "This is unexpected, found a: ";
-            Operand->dump();
             assert(false);
           }
         }
@@ -138,16 +137,12 @@ public:
         if (LB.getValue().getDirection() ==
             Loop::LoopBounds::Direction::Increasing) {
           Max = &LB.getValue().getFinalIVValue();
-          LB.getValue().getFinalIVValue().dump();
           std::cerr << "Min: ";
-          LB.getValue().getInitialIVValue().dump();
         } else {
           Max = &LB.getValue().getInitialIVValue();
           std::cerr << "Min: ";
-          LB.getValue().getFinalIVValue().dump();
         }
         std::cerr << "IV: ";
-        L->getInductionVariable(SE)->dump();
       }
 
     } else {
