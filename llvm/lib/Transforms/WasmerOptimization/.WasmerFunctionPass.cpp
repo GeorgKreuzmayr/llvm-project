@@ -91,7 +91,7 @@ struct WasmerFunctionPass : public FunctionPass {
     return {};
   }
 
-  std::vector<Instruction *> findPotentialExtractBCs(Instruction *BCBranch) {
+  std::pair<Instruction*, std::vector<Instruction *>> findPotentialExtractBCs(Instruction *BCBranch) {
     std::vector<Instruction *> InstructionsUsedForBC;
     if (auto *BCCompare = dyn_cast<ICmpInst>(BCBranch->getPrevNode())) {
       assert(BCCompare->getNumOperands() == 2);
@@ -108,6 +108,7 @@ struct WasmerFunctionPass : public FunctionPass {
 
       // Collect all non loop invariant instructions to calculate bounds
       // check
+      Instruction* BaseValue = nullptr;
       size_t MaxIdx = 1;
       for (size_t CopyStartIdx = 0; CopyStartIdx != MaxIdx; ++CopyStartIdx) {
         auto *Next = InstructionsUsedForBC.at(CopyStartIdx);
@@ -118,7 +119,9 @@ struct WasmerFunctionPass : public FunctionPass {
           }
         }
         if (NonGEPUsers > 2) {
-          return InstructionsUsedForBC;
+          assert(BaseValue == nullptr);
+          BaseValue = Next;
+          continue;
         }
         for (size_t OpIdx = 0; OpIdx < Next->getNumOperands(); ++OpIdx) {
           auto *Operand = Next->getOperand(OpIdx);
@@ -126,6 +129,15 @@ struct WasmerFunctionPass : public FunctionPass {
             if (isa<AddOperator>(OpInst) || isa<ZExtInst>(OpInst)) {
               InstructionsUsedForBC.push_back(OpInst);
               ++MaxIdx;
+            } else if (auto* Trunc = dyn_cast<TruncInst>(OpInst)){
+              if(Trunc->getNumOperands() == 1 && isa<ConstantInt>(Trunc->getOperand(0))){
+                InstructionsUsedForBC.push_back(OpInst);
+                ++MaxIdx;
+              }else{
+                std::cerr << "wrong truncate" << std::endl;
+
+                return {};
+              }
             } else {
               std::cerr << "found non add and zext instr" << std::endl;
               return {};
@@ -139,6 +151,10 @@ struct WasmerFunctionPass : public FunctionPass {
           }
         }
       }
+      if(BaseValue){
+        BaseValue->addAnnotationMetadata(BaseValueAnno);
+        return {BaseValue, InstructionsUsedForBC};
+      }
     }
     return {};
   }
@@ -148,10 +164,15 @@ struct WasmerFunctionPass : public FunctionPass {
     BasicBlock *BCBlock = BasicBlock::Create(Cmp->getContext(), "",
                                              Cmp->getParent()->getParent());
 
-    Instrs.pop_back();                   // Get rid of base value
+
+
+
     Instrs.emplace(Instrs.begin(), Cmp); // Add cmp to Instr
     for (auto It = Instrs.rbegin(); It != Instrs.rend(); ++It) {
       auto *Inst = *It;
+      if(isAnnotated(Inst, BaseValueAnno)){
+        continue;
+      }
       auto *ClonedInst = Inst->clone();
       VMap[Inst] = ClonedInst;
       for (size_t OpIdx = 0; OpIdx < ClonedInst->getNumOperands(); ++OpIdx) {
@@ -167,14 +188,25 @@ struct WasmerFunctionPass : public FunctionPass {
 
   int64_t interpretAddInstructions(std::vector<Instruction *> &Insts) {
     int64_t Sum = 0;
-    for (int64_t Idx = Insts.size() - 2; Idx >= 0; --Idx) {
+    for (int64_t Idx = Insts.size() - 1; Idx >= 0; --Idx) {
       auto *Next = Insts[Idx];
-      if (auto *Add = dyn_cast<AddOperator>(Next)) {
-        assert(Add->getOperand(0) == Insts[Idx + 1]);
-        auto *Const = dyn_cast<ConstantInt>(Add->getOperand(1));
-        Sum += Const->getSExtValue();
+      if (isAnnotated(Next, BaseValueAnno)) {
+      }else{
+        if (auto *Add = dyn_cast<AddOperator>(Next)) {
+          if(Add->getOperand(0) == Insts[Idx + 1] && isa<ConstantInt>(Add->getOperand(1))){
+            auto *Const = dyn_cast<ConstantInt>(Add->getOperand(1));
+            Sum += Const->getSExtValue();
+          }else if(auto* Trunc = dyn_cast<TruncInst>(Add->getOperand(1))){
+            auto* Const = dyn_cast<ConstantInt>(Trunc->getOperand(0));
+            assert(Const);
+            Sum += Const->getSExtValue();
+          }else{
+            assert(false);
+          }
+        }
       }
     }
+    std::cerr << "SUM: " << Sum << std::endl;
     return Sum;
   }
 
@@ -190,10 +222,11 @@ struct WasmerFunctionPass : public FunctionPass {
       for (auto &Inst : BB.getInstList()) {
         if (isAnnotated(&Inst, WasmerBoundsCheck) && Inst.getPrevNode()) {
           auto *BCCmp = dyn_cast<ICmpInst>(Inst.getPrevNode());
-          auto BCInstr = findPotentialExtractBCs(&Inst);
+          auto BCPair = findPotentialExtractBCs(&Inst);
+          auto BCInstr = BCPair.second;
           if (!BCInstr.empty()) {
             BCMap.emplace(BCCmp, BCInstr);
-            auto *ExtractInstr = BCInstr.back();
+            auto *ExtractInstr = BCPair.first;
             auto It = PotentialExtract.find(ExtractInstr);
             if (It != PotentialExtract.end()) {
               It->second.push_back(BCCmp);

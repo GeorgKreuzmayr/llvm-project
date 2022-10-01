@@ -123,7 +123,7 @@ public:
     return {};
   }
 
-  std::vector<Instruction *> findPotentialExtractBCs(Instruction *BCBranch) {
+  std::pair<Instruction*, std::vector<Instruction *>> findPotentialExtractBCs(Instruction *BCBranch) {
     std::vector<Instruction *> InstructionsUsedForBC;
     if (auto *BCCompare = dyn_cast<ICmpInst>(BCBranch->getPrevNode())) {
       assert(BCCompare->getNumOperands() == 2);
@@ -140,6 +140,7 @@ public:
 
       // Collect all non loop invariant instructions to calculate bounds
       // check
+      Instruction* BaseValue = nullptr;
       size_t MaxIdx = 1;
       for (size_t CopyStartIdx = 0; CopyStartIdx != MaxIdx; ++CopyStartIdx) {
         auto *Next = InstructionsUsedForBC.at(CopyStartIdx);
@@ -150,7 +151,9 @@ public:
           }
         }
         if (NonGEPUsers > 2) {
-          return InstructionsUsedForBC;
+          assert(BaseValue == nullptr);
+          BaseValue = Next;
+          continue;
         }
         for (size_t OpIdx = 0; OpIdx < Next->getNumOperands(); ++OpIdx) {
           auto *Operand = Next->getOperand(OpIdx);
@@ -158,6 +161,15 @@ public:
             if (isa<AddOperator>(OpInst) || isa<ZExtInst>(OpInst)) {
               InstructionsUsedForBC.push_back(OpInst);
               ++MaxIdx;
+            } else if (auto* Trunc = dyn_cast<TruncInst>(OpInst)){
+              if(Trunc->getNumOperands() == 1 && isa<ConstantInt>(Trunc->getOperand(0))){
+                InstructionsUsedForBC.push_back(OpInst);
+                ++MaxIdx;
+              }else{
+                std::cerr << "wrong truncate" << std::endl;
+
+                return {};
+              }
             } else {
               std::cerr << "found non add and zext instr" << std::endl;
               return {};
@@ -171,6 +183,10 @@ public:
           }
         }
       }
+      if(BaseValue){
+        BaseValue->addAnnotationMetadata(BaseValueAnno);
+        return {BaseValue, InstructionsUsedForBC};
+      }
     }
     return {};
   }
@@ -180,10 +196,15 @@ public:
     BasicBlock *BCBlock = BasicBlock::Create(Cmp->getContext(), "",
                                              Cmp->getParent()->getParent());
 
-    Instrs.pop_back();                   // Get rid of base value
+
+
+
     Instrs.emplace(Instrs.begin(), Cmp); // Add cmp to Instr
     for (auto It = Instrs.rbegin(); It != Instrs.rend(); ++It) {
       auto *Inst = *It;
+      if(isAnnotated(Inst, BaseValueAnno)){
+        continue;
+      }
       auto *ClonedInst = Inst->clone();
       VMap[Inst] = ClonedInst;
       for (size_t OpIdx = 0; OpIdx < ClonedInst->getNumOperands(); ++OpIdx) {
@@ -199,18 +220,30 @@ public:
 
   int64_t interpretAddInstructions(std::vector<Instruction *> &Insts) {
     int64_t Sum = 0;
-    for (int64_t Idx = Insts.size() - 2; Idx >= 0; --Idx) {
+    for (int64_t Idx = Insts.size() - 1; Idx >= 0; --Idx) {
       auto *Next = Insts[Idx];
-      if (auto *Add = dyn_cast<AddOperator>(Next)) {
-        assert(Add->getOperand(0) == Insts[Idx + 1]);
-        auto *Const = dyn_cast<ConstantInt>(Add->getOperand(1));
-        Sum += Const->getSExtValue();
+      if (isAnnotated(Next, BaseValueAnno)) {
+      }else{
+        if (auto *Add = dyn_cast<AddOperator>(Next)) {
+          if(Add->getOperand(0) == Insts[Idx + 1] && isa<ConstantInt>(Add->getOperand(1))){
+            auto *Const = dyn_cast<ConstantInt>(Add->getOperand(1));
+            Sum += Const->getSExtValue();
+          }else if(auto* Trunc = dyn_cast<TruncInst>(Add->getOperand(1))){
+            auto* Const = dyn_cast<ConstantInt>(Trunc->getOperand(0));
+            assert(Const);
+            Sum += Const->getSExtValue();
+          }else{
+            assert(false);
+          }
+        }
       }
     }
+    std::cerr << "SUM: " << Sum << std::endl;
     return Sum;
   }
 
   bool runOnFunction(Function &F) override {
+
     auto *EntryBlock = &F.getEntryBlock();
     std::unordered_map<Instruction *, std::vector<ICmpInst *>> PotentialExtract;
     std::unordered_map<ICmpInst *, std::vector<Instruction *>> BCMap;
@@ -221,10 +254,11 @@ public:
       for (auto &Inst : BB.getInstList()) {
         if (isAnnotated(&Inst, WasmerBoundsCheck) && Inst.getPrevNode()) {
           auto *BCCmp = dyn_cast<ICmpInst>(Inst.getPrevNode());
-          auto BCInstr = findPotentialExtractBCs(&Inst);
+          auto BCPair = findPotentialExtractBCs(&Inst);
+          auto BCInstr = BCPair.second;
           if (!BCInstr.empty()) {
             BCMap.emplace(BCCmp, BCInstr);
-            auto *ExtractInstr = BCInstr.back();
+            auto *ExtractInstr = BCPair.first;
             auto It = PotentialExtract.find(ExtractInstr);
             if (It != PotentialExtract.end()) {
               It->second.push_back(BCCmp);
@@ -301,11 +335,6 @@ public:
       auto *MaxBCBlock =
           createBCBlock(BCMap.find(MaxPair.second.second)->second,
                         MaxPair.second.second, VMap);
-      auto* MBranch = dyn_cast<BranchInst>(MaxPair.second.second->getNextNode());
-      if(!MBranch || !MBranch->getSuccessor(0)->getName().startswith("not_in_bounds_block")){
-        std::cerr << "need to revisit branching";
-        assert(false);
-      }
 
       // Insert one Bounds Check with max value to entry block
       if (ExtractInstr->getParent() == EntryBlock &&

@@ -20,6 +20,7 @@ static constexpr const char *WasmerBoundsCheck = "wasmer_bounds_check";
 static constexpr const char *NonLoopIV = "NonLoopIV";
 static constexpr const char *InductionVariableAnno = "InductionVariableAnno";
 static constexpr const char *RemoveBC = "RemoveBC";
+static constexpr const char *BaseValueAnno = "BaseValue";
 
 
 
