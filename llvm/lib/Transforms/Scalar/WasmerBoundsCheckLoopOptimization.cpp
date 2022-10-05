@@ -150,6 +150,10 @@ public:
       return false;
     }
 
+    if(isa<Instruction>(Max) && L->contains(dyn_cast<Instruction>(Max))){
+      return false;
+    }
+
     ValueToValueMapTy VMap;
     BasicBlock*LastPreLoopBlock = L->getLoopPreheader();
     BasicBlock* FirstLoopBlock = L->getBlocks().front();

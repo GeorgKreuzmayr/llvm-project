@@ -87,7 +87,6 @@ public:
             if (OpInst->getParent() != BB) {
               // Skip Instructions from different BB
               if (OpInst->getParent() != EntryBlock) {
-                std::cerr << "PARENT IS NOT ENTRY BLOCK" << std::endl;
                 return {};
               }
               assert(OpInst->getParent() == EntryBlock);
@@ -105,14 +104,9 @@ public:
               ++MaxIdx;
             }
           } else if (isa<Argument>(Operand)) {
-            std::cerr << "Argument: ";
             assert(false);
           } else if (isa<Constant>(Operand)) {
-            auto *Const = dyn_cast<Constant>(Operand);
-            std::cerr << "Constant: ";
           } else {
-            std::cerr << "This is unexpected, found a: ";
-            std::cerr << "Type: ";
             assert(false);
           }
         }
@@ -151,6 +145,9 @@ public:
           }
         }
         if (NonGEPUsers > 2) {
+          if(BaseValue != nullptr){
+            return {};
+          }
           assert(BaseValue == nullptr);
           BaseValue = Next;
           continue;
@@ -166,12 +163,9 @@ public:
                 InstructionsUsedForBC.push_back(OpInst);
                 ++MaxIdx;
               }else{
-                std::cerr << "wrong truncate" << std::endl;
-
                 return {};
               }
             } else {
-              std::cerr << "found non add and zext instr" << std::endl;
               return {};
             }
           } else if (isa<Constant>(Operand)) {
@@ -184,6 +178,9 @@ public:
         }
       }
       if(BaseValue){
+        if(InstructionsUsedForBC.size() == 1){
+          return {};
+        }
         BaseValue->addAnnotationMetadata(BaseValueAnno);
         return {BaseValue, InstructionsUsedForBC};
       }
@@ -218,6 +215,20 @@ public:
     return BCBlock;
   }
 
+  int64_t interpretSecondOp(Value* SecondOp){
+    if(isa<ConstantInt>(SecondOp)){
+      auto *Const = dyn_cast<ConstantInt>(SecondOp);
+      return Const->getSExtValue();
+    }
+    if(auto* Trunc = dyn_cast<TruncInst>(SecondOp)){
+      auto* Const = dyn_cast<ConstantInt>(Trunc->getOperand(0));
+      assert(Const);
+      return Const->getSExtValue();
+    }
+    SecondOp->dump();
+    assert(false);
+  }
+
   int64_t interpretAddInstructions(std::vector<Instruction *> &Insts) {
     int64_t Sum = 0;
     for (int64_t Idx = Insts.size() - 1; Idx >= 0; --Idx) {
@@ -225,25 +236,27 @@ public:
       if (isAnnotated(Next, BaseValueAnno)) {
       }else{
         if (auto *Add = dyn_cast<AddOperator>(Next)) {
-          if(Add->getOperand(0) == Insts[Idx + 1] && isa<ConstantInt>(Add->getOperand(1))){
-            auto *Const = dyn_cast<ConstantInt>(Add->getOperand(1));
-            Sum += Const->getSExtValue();
-          }else if(auto* Trunc = dyn_cast<TruncInst>(Add->getOperand(1))){
-            auto* Const = dyn_cast<ConstantInt>(Trunc->getOperand(0));
-            assert(Const);
-            Sum += Const->getSExtValue();
-          }else{
+          if(Add->getOperand(0) == Insts[Idx + 1] && Add->getOperand(1) == Insts[Idx + 2]){
+            // do nothing
+          }else if(Add->getOperand(0) == Insts[Idx + 1]){
+            Sum += interpretSecondOp(Add->getOperand(1));
+          }else if(isa<Argument>(Add->getOperand(0))){
+            Sum += interpretSecondOp(Add->getOperand(1));
+          }else if(isa<Argument>(Add->getOperand(1))){
+            Sum += interpretSecondOp(Add->getOperand(0));
+          }else {
+            for(auto* I : Insts){
+              I->dump();
+            }
             assert(false);
           }
         }
       }
     }
-    std::cerr << "SUM: " << Sum << std::endl;
     return Sum;
   }
 
   bool runOnFunction(Function &F) override {
-
     auto *EntryBlock = &F.getEntryBlock();
     std::unordered_map<Instruction *, std::vector<ICmpInst *>> PotentialExtract;
     std::unordered_map<ICmpInst *, std::vector<Instruction *>> BCMap;
@@ -276,10 +289,8 @@ public:
     for (auto PotExPair : PotentialExtract) {
       auto *ExtractInstr = PotExPair.first;
       if (PotExPair.second.size() < 3) {
-        std::cerr << "Found less than 3 BCs for ";
         continue;
       }
-      std::cerr << "Potential Extraction value: ";
       bool First = true;
       int64_t Max = 0;
       ICmpInst *MaxCmp = nullptr;
@@ -298,8 +309,6 @@ public:
         }
       }
       MaxAdd.emplace(ExtractInstr, std::pair<int64_t, ICmpInst *>{Max, MaxCmp});
-      std::cerr << "Max: " << Max << std::endl;
-      std::cerr << "Extracting " << PotExPair.second.size() << " bcs" << std::endl;
     }
 
     ValueToValueMapTy VMap;
@@ -357,8 +366,6 @@ public:
       } else {
         MaxBCBlock->removeFromParent();
         MaxBCBlock->dropAllReferences();
-        std::cerr << "Require either replace or Same Comp to be in entry block"
-                  << std::endl;
         continue;
       }
       std::cerr << "Successful Extraction" << std::endl;
@@ -379,8 +386,6 @@ public:
         BCBranch->deleteValue();
       }
     }
-
-    std::cerr << "Successful Extraction" << std::endl;
 
     return true;
   }
