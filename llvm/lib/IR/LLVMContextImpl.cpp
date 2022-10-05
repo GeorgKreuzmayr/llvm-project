@@ -51,10 +51,12 @@ LLVMContextImpl::~LLVMContextImpl() {
     delete *OwnedModules.begin();
 
 #ifndef NDEBUG
+  /*
   // Check for metadata references from leaked Values.
   for (auto &Pair : ValueMetadata)
     Pair.first->dump();
   assert(ValueMetadata.empty() && "Values with metadata have been leaked");
+  */
 #endif
 
   // Drop references for MDNodes.  Do this before Values get deleted to avoid
