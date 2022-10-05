@@ -77,7 +77,10 @@ public:
    * check for one memory access and adds them to the pre loop header.
    */
   std::vector<Instruction*> extractBcInstructions(BranchInst*BoundsCheckBranch, Loop* L, Instruction* InductionVariable){
-    if (auto *BCCompare = dyn_cast<ICmpInst>(BoundsCheckBranch->getPrevNode())) {
+        if(!BoundsCheckBranch->getPrevNode()){
+      return {};
+    }
+	if (auto *BCCompare = dyn_cast<ICmpInst>(BoundsCheckBranch->getPrevNode())) {
       std::vector<Instruction *> InstructionsUsedForBC;
       InstructionsUsedForBC.push_back(BCCompare);
 
@@ -131,8 +134,6 @@ public:
     InductionVariable->addAnnotationMetadata(InductionVariableAnno);
     Value *Max = nullptr;
     if (LB) {
-      if (isa<ConstantInt>(&LB.getValue().getInitialIVValue()) &&
-          isa<ConstantInt>(&LB.getValue().getFinalIVValue())) {
         std::cerr << "Max: ";
         if (LB.getValue().getDirection() ==
             Loop::LoopBounds::Direction::Increasing) {
@@ -144,10 +145,6 @@ public:
         }
         std::cerr << "IV: ";
       }
-
-    } else {
-      return false;
-    }
 
     if(!Max){
       return false;
