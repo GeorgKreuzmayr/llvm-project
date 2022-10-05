@@ -225,7 +225,6 @@ public:
       assert(Const);
       return Const->getSExtValue();
     }
-    SecondOp->dump();
     assert(false);
   }
 
@@ -245,9 +244,6 @@ public:
           }else if(isa<Argument>(Add->getOperand(1))){
             Sum += interpretSecondOp(Add->getOperand(0));
           }else {
-            for(auto* I : Insts){
-              I->dump();
-            }
             assert(false);
           }
         }

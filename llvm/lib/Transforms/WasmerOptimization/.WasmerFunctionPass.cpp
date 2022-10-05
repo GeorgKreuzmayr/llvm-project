@@ -195,7 +195,6 @@ struct WasmerFunctionPass : public FunctionPass {
       assert(Const);
       return Const->getSExtValue();
     }
-    SecondOp->dump();
     assert(false);
   }
 
@@ -215,9 +214,6 @@ struct WasmerFunctionPass : public FunctionPass {
           }else if(isa<Argument>(Add->getOperand(1))){
             Sum += interpretSecondOp(Add->getOperand(0));
           }else {
-            for(auto* I : Insts){
-              I->dump();
-            }
             assert(false);
           }
         }
